@@ -5,10 +5,13 @@ import (
 	"strings"
 
 	"decoy-club/backend/internal/auth"
+	"decoy-club/backend/internal/comments"
 	"decoy-club/backend/internal/common/middleware"
 	"decoy-club/backend/internal/common/response"
 	"decoy-club/backend/internal/config"
+	"decoy-club/backend/internal/notifications"
 	"decoy-club/backend/internal/posts"
+	"decoy-club/backend/internal/uploads"
 	"decoy-club/backend/internal/users"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +33,7 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 	router.Use(gin.Recovery())
 	router.Use(middleware.RequestID())
 	router.Use(middleware.CORS(cfg.FrontendOrigin))
+	router.Static("/uploads", cfg.UploadDir)
 
 	var authRepo auth.Repository
 	if deps != nil && deps.Database != nil {
@@ -55,8 +59,37 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 	} else {
 		postRepo = posts.NewMemoryRepository(userRepo)
 	}
-	postService := posts.NewService(postRepo)
-	postHandler := posts.NewHandler(postService)
+	commentCounter, _ := postRepo.(comments.PostCounter)
+	var commentRepo comments.Repository
+	if deps != nil && deps.Database != nil {
+		commentRepo = comments.NewMongoRepository(deps.Database, commentCounter)
+	} else {
+		commentRepo = comments.NewMemoryRepository(commentCounter)
+	}
+
+	var notificationRepo notifications.Repository
+	if deps != nil && deps.Database != nil {
+		notificationRepo = notifications.NewMongoRepository(deps.Database)
+	} else {
+		notificationRepo = notifications.NewMemoryRepository()
+	}
+	notificationService := notifications.NewService(notificationRepo, userRepo, postRepo, commentRepo)
+	notificationHandler := notifications.NewHandler(notificationService)
+
+	postService := posts.NewService(postRepo, notificationService)
+	postHandler := posts.NewHandler(postService, userRepo)
+
+	commentService := comments.NewService(commentRepo, notificationService)
+	commentHandler := comments.NewHandler(commentService, userRepo)
+
+	var uploadRepo uploads.Repository
+	if deps != nil && deps.Database != nil {
+		uploadRepo = uploads.NewMongoRepository(deps.Database)
+	} else {
+		uploadRepo = uploads.NewMemoryRepository()
+	}
+	uploadService := uploads.NewService(uploadRepo, cfg.PublicBaseURL, cfg.UploadDir)
+	uploadHandler := uploads.NewHandler(uploadService)
 
 	api := router.Group("/api/v1")
 	api.GET("/health", func(c *gin.Context) {
@@ -67,19 +100,35 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 
 	usersGroup := api.Group("/users", optionalViewerID(cfg.JWTSecret))
 	usersGroup.GET("/:username/profile", userHandler.GetProfile)
+	usersGroup.GET("/:username/posts", postHandler.ListPostsByUsername)
 
 	authedUsers := api.Group("/users", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
 	authedUsers.POST("/:username/follow", userHandler.Follow)
 	authedUsers.DELETE("/:username/follow", userHandler.Unfollow)
 
-	api.GET("/posts", postHandler.ListPublicTimeline)
-	api.GET("/posts/:postId", postHandler.GetPost)
+	api.GET("/posts", optionalViewerID(cfg.JWTSecret), postHandler.ListPublicTimeline)
+	api.GET("/posts/:postId", optionalViewerID(cfg.JWTSecret), postHandler.GetPost)
+	api.GET("/posts/:postId/comments", commentHandler.ListPostComments)
 
 	authedPosts := api.Group("/posts", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
 	authedPosts.POST("", postHandler.CreatePost)
 	authedPosts.DELETE("/:postId", postHandler.DeletePost)
 	authedPosts.POST("/:postId/like", postHandler.LikePost)
 	authedPosts.DELETE("/:postId/like", postHandler.UnlikePost)
+	authedPosts.POST("/:postId/comments", commentHandler.CreatePostComment)
+
+	authedComments := api.Group("/comments", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
+	authedComments.POST("/:commentId/replies", commentHandler.ReplyToComment)
+	authedComments.DELETE("/:commentId", commentHandler.DeleteComment)
+
+	authedNotifications := api.Group("/notifications", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
+	authedNotifications.GET("/unread-count", notificationHandler.GetUnreadCount)
+	authedNotifications.GET("", notificationHandler.ListNotifications)
+	authedNotifications.GET("/:notificationId", notificationHandler.GetNotification)
+	authedNotifications.POST("/read", notificationHandler.MarkRead)
+
+	authedUploads := api.Group("/uploads", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
+	authedUploads.POST("/images", uploadHandler.UploadImage)
 
 	authedTimeline := api.Group("/timeline", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
 	authedTimeline.GET("/following", postHandler.ListFollowingTimeline)

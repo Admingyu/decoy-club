@@ -10,7 +10,7 @@ import (
 
 func TestCreatePostRendersMarkdownAndIncrementsCounter(t *testing.T) {
 	repo := newFakePostRepo()
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	post, err := svc.CreatePost(context.Background(), CreatePostInput{
 		AuthorID:        "507f1f77bcf86cd799439012",
@@ -28,7 +28,7 @@ func TestCreatePostRendersMarkdownAndIncrementsCounter(t *testing.T) {
 
 func TestCreatePostRejectsInvalidAuthorID(t *testing.T) {
 	repo := newFakePostRepo()
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	_, err := svc.CreatePost(context.Background(), CreatePostInput{
 		AuthorID:        "user-1",
@@ -41,7 +41,7 @@ func TestCreatePostRejectsInvalidAuthorID(t *testing.T) {
 
 func TestLikePostIsIdempotent(t *testing.T) {
 	repo := newFakePostRepo()
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	if err := svc.LikePost(context.Background(), "post-1", "user-1"); err != nil {
 		t.Fatalf("first like failed: %v", err)
@@ -54,9 +54,27 @@ func TestLikePostIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestUnlikePostIsIdempotent(t *testing.T) {
+	repo := newFakePostRepo()
+	svc := NewService(repo, nil)
+
+	if err := svc.LikePost(context.Background(), "post-1", "user-1"); err != nil {
+		t.Fatalf("like failed: %v", err)
+	}
+	if err := svc.UnlikePost(context.Background(), "post-1", "user-1"); err != nil {
+		t.Fatalf("first unlike failed: %v", err)
+	}
+	if err := svc.UnlikePost(context.Background(), "post-1", "user-1"); err != nil {
+		t.Fatalf("second unlike should be idempotent, got %v", err)
+	}
+	if repo.likeCountDelta != 0 {
+		t.Fatalf("expected like counter to return to zero, got %d", repo.likeCountDelta)
+	}
+}
+
 func TestListFollowingTimelineUsesFollowedAuthorsOnly(t *testing.T) {
 	repo := newFakePostRepo()
-	svc := NewService(repo)
+	svc := NewService(repo, nil)
 
 	posts, err := svc.ListFollowingTimeline(context.Background(), "viewer-1", 1, 20)
 	if err != nil {
@@ -67,12 +85,23 @@ func TestListFollowingTimelineUsesFollowedAuthorsOnly(t *testing.T) {
 	}
 }
 
+func TestListPublicTimelineRejectsBeforeIDWithoutBefore(t *testing.T) {
+	repo := newFakePostRepo()
+	svc := NewService(repo, nil)
+
+	if _, err := svc.ListPublicTimeline(context.Background(), 20, nil, "post-2"); err != ErrInvalidTimelineCursor {
+		t.Fatalf("expected ErrInvalidTimelineCursor, got %v", err)
+	}
+}
+
 type fakePostRepo struct {
-	posts          map[string]*Post
-	follows        map[string]map[string]struct{}
-	likes          map[string]map[string]struct{}
-	postCountDelta int64
-	likeCountDelta  int64
+	posts              map[string]*Post
+	follows            map[string]map[string]struct{}
+	likes              map[string]map[string]struct{}
+	postCountDelta     int64
+	likeCountDelta     int64
+	lastPublicBefore   *time.Time
+	lastPublicBeforeID string
 }
 
 func newFakePostRepo() *fakePostRepo {
@@ -145,8 +174,8 @@ func (r *fakePostRepo) FindPostByID(_ context.Context, id string) (*Post, error)
 
 func (r *fakePostRepo) ListPublicTimeline(_ context.Context, limit int, before *time.Time, beforeID string) ([]*Post, error) {
 	_ = limit
-	_ = before
-	_ = beforeID
+	r.lastPublicBefore = before
+	r.lastPublicBeforeID = beforeID
 	return nil, nil
 }
 
@@ -180,6 +209,23 @@ func (r *fakePostRepo) CreateLikeIfAbsent(_ context.Context, postID, userID stri
 	return true, nil
 }
 
+func (r *fakePostRepo) LikePost(_ context.Context, postID, userID string) (bool, error) {
+	post, ok := r.posts[postID]
+	if !ok || post.IsDeleted {
+		return false, ErrPostNotFound
+	}
+	if _, ok := r.likes[postID]; !ok {
+		r.likes[postID] = make(map[string]struct{})
+	}
+	if _, exists := r.likes[postID][userID]; exists {
+		return false, nil
+	}
+	r.likes[postID][userID] = struct{}{}
+	post.LikeCount++
+	r.likeCountDelta++
+	return true, nil
+}
+
 func (r *fakePostRepo) ApplyLikeSideEffects(_ context.Context, postID, userID string) error {
 	post, ok := r.posts[postID]
 	if !ok || post.IsDeleted {
@@ -208,6 +254,29 @@ func (r *fakePostRepo) RemoveLikeIfPresent(_ context.Context, postID, userID str
 	if len(likesByPost) == 0 {
 		delete(r.likes, postID)
 	}
+	return true, nil
+}
+
+func (r *fakePostRepo) UnlikePost(_ context.Context, postID, userID string) (bool, error) {
+	post, ok := r.posts[postID]
+	if !ok || post.IsDeleted {
+		return false, ErrPostNotFound
+	}
+	likesByPost, ok := r.likes[postID]
+	if !ok {
+		return false, nil
+	}
+	if _, exists := likesByPost[userID]; !exists {
+		return false, nil
+	}
+	delete(likesByPost, userID)
+	if len(likesByPost) == 0 {
+		delete(r.likes, postID)
+	}
+	if post.LikeCount > 0 {
+		post.LikeCount--
+	}
+	r.likeCountDelta--
 	return true, nil
 }
 
@@ -256,6 +325,42 @@ func (r *fakePostRepo) ListFollowingTimeline(_ context.Context, viewerID string,
 		end = len(posts)
 	}
 	return posts[start:end], nil
+}
+
+func (r *fakePostRepo) ListPostsByAuthorID(_ context.Context, authorID string, limit int) ([]*Post, error) {
+	posts := make([]*Post, 0, len(r.posts))
+	for _, post := range r.posts {
+		if post.IsDeleted || post.AuthorID.Hex() != authorID {
+			continue
+		}
+		cp := *post
+		posts = append(posts, &cp)
+	}
+	if limit > 0 && len(posts) > limit {
+		posts = posts[:limit]
+	}
+	return posts, nil
+}
+
+func (r *fakePostRepo) HasLike(_ context.Context, postID, userID string) (bool, error) {
+	likesByPost, ok := r.likes[postID]
+	if !ok {
+		return false, nil
+	}
+	_, exists := likesByPost[userID]
+	return exists, nil
+}
+
+func (r *fakePostRepo) ListLikedPostIDs(_ context.Context, userID string, postIDs []string) (map[string]bool, error) {
+	result := make(map[string]bool)
+	for _, postID := range postIDs {
+		if likesByPost, ok := r.likes[postID]; ok {
+			if _, exists := likesByPost[userID]; exists {
+				result[postID] = true
+			}
+		}
+	}
+	return result, nil
 }
 
 var _ Repository = (*fakePostRepo)(nil)

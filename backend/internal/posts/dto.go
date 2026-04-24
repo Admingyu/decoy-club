@@ -10,10 +10,12 @@ type CreatePostRequest struct {
 type PostView struct {
 	ID              string     `json:"id"`
 	AuthorID        string     `json:"author_id"`
+	AuthorUsername  string     `json:"author_username,omitempty"`
 	ContentMarkdown string     `json:"content_markdown"`
 	ContentHTML     string     `json:"content_html"`
 	EmbeddedImages  []string   `json:"embedded_images"`
 	LikeCount       int64      `json:"like_count"`
+	LikedByViewer   bool       `json:"liked_by_viewer"`
 	CommentCount    int64      `json:"comment_count"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
@@ -37,17 +39,29 @@ type FollowingTimelineResponse struct {
 }
 
 func NewPostView(post *Post) *PostView {
+	return NewPostViewWithAuthorAndLike(post, "", false)
+}
+
+func NewPostViewWithAuthor(post *Post, authorUsername string) *PostView {
+	return NewPostViewWithAuthorAndLike(post, authorUsername, false)
+}
+
+func NewPostViewWithAuthorAndLike(post *Post, authorUsername string, likedByViewer bool) *PostView {
 	if post == nil {
 		return nil
 	}
 
+	embeddedImages := append([]string{}, post.EmbeddedImages...)
+
 	return &PostView{
 		ID:              post.ID.Hex(),
 		AuthorID:        post.AuthorID.Hex(),
+		AuthorUsername:  authorUsername,
 		ContentMarkdown: post.ContentMarkdown,
 		ContentHTML:     post.ContentHTML,
-		EmbeddedImages:  append([]string(nil), post.EmbeddedImages...),
+		EmbeddedImages:  embeddedImages,
 		LikeCount:       post.LikeCount,
+		LikedByViewer:   likedByViewer,
 		CommentCount:    post.CommentCount,
 		CreatedAt:       post.CreatedAt,
 		UpdatedAt:       post.UpdatedAt,
@@ -56,13 +70,29 @@ func NewPostView(post *Post) *PostView {
 }
 
 func NewPostViews(posts []*Post) []*PostView {
+	return NewPostViewsWithAuthorsAndLikes(posts, nil, nil)
+}
+
+func NewPostViewsWithAuthors(posts []*Post, authorUsernames map[string]string) []*PostView {
+	return NewPostViewsWithAuthorsAndLikes(posts, authorUsernames, nil)
+}
+
+func NewPostViewsWithAuthorsAndLikes(posts []*Post, authorUsernames map[string]string, likedPostIDs map[string]bool) []*PostView {
 	if len(posts) == 0 {
 		return []*PostView{}
 	}
 
 	views := make([]*PostView, 0, len(posts))
 	for _, post := range posts {
-		views = append(views, NewPostView(post))
+		username := ""
+		if authorUsernames != nil {
+			username = authorUsernames[post.AuthorID.Hex()]
+		}
+		liked := false
+		if likedPostIDs != nil {
+			liked = likedPostIDs[post.ID.Hex()]
+		}
+		views = append(views, NewPostViewWithAuthorAndLike(post, username, liked))
 	}
 
 	return views

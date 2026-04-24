@@ -36,32 +36,32 @@ type NotificationContext struct {
 type NotificationPostSnapshot struct {
 	ID              bson.ObjectID `bson:"id" json:"id"`
 	AuthorID        bson.ObjectID `bson:"author_id" json:"author_id"`
-	AuthorUsername  string             `bson:"author_username" json:"author_username"`
-	ContentMarkdown string             `bson:"content_markdown" json:"content_markdown"`
-	ContentPreview  string             `bson:"content_preview" json:"content_preview"`
+	AuthorUsername  string        `bson:"author_username" json:"author_username"`
+	ContentMarkdown string        `bson:"content_markdown" json:"content_markdown"`
+	ContentPreview  string        `bson:"content_preview" json:"content_preview"`
 }
 
 type NotificationCommentSnapshot struct {
 	ID              bson.ObjectID `bson:"id" json:"id"`
 	AuthorID        bson.ObjectID `bson:"author_id" json:"author_id"`
-	AuthorUsername  string             `bson:"author_username" json:"author_username"`
-	ContentMarkdown string             `bson:"content_markdown" json:"content_markdown"`
-	ContentPreview  string             `bson:"content_preview" json:"content_preview"`
-	CreatedAt       time.Time          `bson:"created_at" json:"created_at"`
+	AuthorUsername  string        `bson:"author_username" json:"author_username"`
+	ContentMarkdown string        `bson:"content_markdown" json:"content_markdown"`
+	ContentPreview  string        `bson:"content_preview" json:"content_preview"`
+	CreatedAt       time.Time     `bson:"created_at" json:"created_at"`
 }
 
 type NotificationParentCommentSnapshot struct {
 	ID              bson.ObjectID `bson:"id" json:"id"`
 	AuthorID        bson.ObjectID `bson:"author_id" json:"author_id"`
-	AuthorUsername  string             `bson:"author_username" json:"author_username"`
-	ContentMarkdown string             `bson:"content_markdown" json:"content_markdown"`
-	ContentPreview  string             `bson:"content_preview" json:"content_preview"`
-	CreatedAt       time.Time          `bson:"created_at" json:"created_at"`
+	AuthorUsername  string        `bson:"author_username" json:"author_username"`
+	ContentMarkdown string        `bson:"content_markdown" json:"content_markdown"`
+	ContentPreview  string        `bson:"content_preview" json:"content_preview"`
+	CreatedAt       time.Time     `bson:"created_at" json:"created_at"`
 }
 
 type NotificationActorSnapshot struct {
 	ID       bson.ObjectID `bson:"id" json:"id"`
-	Username string             `bson:"username" json:"username"`
+	Username string        `bson:"username" json:"username"`
 }
 
 type NotificationSnapshotFlags struct {

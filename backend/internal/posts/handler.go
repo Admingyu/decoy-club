@@ -14,11 +14,12 @@ import (
 )
 
 type Handler struct {
-	svc *Service
+	svc       *Service
+	usersRepo users.Repository
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, usersRepo users.Repository) *Handler {
+	return &Handler{svc: svc, usersRepo: usersRepo}
 }
 
 func (h *Handler) CreatePost(c *gin.Context) {
@@ -48,7 +49,7 @@ func (h *Handler) CreatePost(c *gin.Context) {
 		return
 	}
 
-	response.JSON(c, http.StatusCreated, CreatePostResponse{Post: NewPostView(post)})
+	response.JSON(c, http.StatusCreated, CreatePostResponse{Post: h.newPostView(c.Request.Context(), post, viewerID)})
 }
 
 func (h *Handler) ListPublicTimeline(c *gin.Context) {
@@ -73,7 +74,7 @@ func (h *Handler) ListPublicTimeline(c *gin.Context) {
 		return
 	}
 
-	response.JSON(c, http.StatusOK, PublicTimelineResponse{Posts: NewPostViews(posts)})
+	response.JSON(c, http.StatusOK, PublicTimelineResponse{Posts: h.newPostViews(c.Request.Context(), posts, c.GetString(users.ContextKeyViewerID))})
 }
 
 func (h *Handler) GetPost(c *gin.Context) {
@@ -88,7 +89,7 @@ func (h *Handler) GetPost(c *gin.Context) {
 		return
 	}
 
-	response.JSON(c, http.StatusOK, PostResponse{Post: NewPostView(post)})
+	response.JSON(c, http.StatusOK, PostResponse{Post: h.newPostView(c.Request.Context(), post, c.GetString(users.ContextKeyViewerID))})
 }
 
 func (h *Handler) DeletePost(c *gin.Context) {
@@ -165,5 +166,81 @@ func (h *Handler) ListFollowingTimeline(c *gin.Context) {
 		return
 	}
 
-	response.JSON(c, http.StatusOK, FollowingTimelineResponse{Posts: NewPostViews(posts)})
+	response.JSON(c, http.StatusOK, FollowingTimelineResponse{Posts: h.newPostViews(c.Request.Context(), posts, viewerID)})
+}
+
+func (h *Handler) ListPostsByUsername(c *gin.Context) {
+	username := c.Param("username")
+	user, err := h.usersRepo.FindByUsername(c.Request.Context(), username)
+	if err != nil {
+		status := http.StatusBadRequest
+		if err == users.ErrUserNotFound {
+			status = http.StatusNotFound
+		}
+		response.JSON(c, status, gin.H{"error": err.Error()})
+		return
+	}
+
+	posts, err := h.svc.ListPostsByAuthorID(c.Request.Context(), user.ID.Hex(), 20)
+	if err != nil {
+		response.JSON(c, http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	authorUsernames := map[string]string{user.ID.Hex(): user.Username}
+	likedPostIDs := h.likedPostIDs(c.Request.Context(), c.GetString(users.ContextKeyViewerID), posts)
+	response.JSON(c, http.StatusOK, PublicTimelineResponse{Posts: NewPostViewsWithAuthorsAndLikes(posts, authorUsernames, likedPostIDs)})
+}
+
+func (h *Handler) newPostView(ctx context.Context, post *Post, viewerID string) *PostView {
+	if post == nil {
+		return nil
+	}
+	username := ""
+	liked := false
+	if h.usersRepo != nil {
+		if user, err := h.usersRepo.FindByID(ctx, post.AuthorID.Hex()); err == nil && user != nil {
+			username = user.Username
+		}
+	}
+	if viewerID != "" {
+		if likedResult, err := h.svc.repo.HasLike(ctx, post.ID.Hex(), viewerID); err == nil {
+			liked = likedResult
+		}
+	}
+	return NewPostViewWithAuthorAndLike(post, username, liked)
+}
+
+func (h *Handler) newPostViews(ctx context.Context, posts []*Post, viewerID string) []*PostView {
+	if len(posts) == 0 {
+		return []*PostView{}
+	}
+	authorUsernames := make(map[string]string)
+	if h.usersRepo != nil {
+		for _, post := range posts {
+			authorID := post.AuthorID.Hex()
+			if _, ok := authorUsernames[authorID]; ok {
+				continue
+			}
+			if user, err := h.usersRepo.FindByID(ctx, authorID); err == nil && user != nil {
+				authorUsernames[authorID] = user.Username
+			}
+		}
+	}
+	return NewPostViewsWithAuthorsAndLikes(posts, authorUsernames, h.likedPostIDs(ctx, viewerID, posts))
+}
+
+func (h *Handler) likedPostIDs(ctx context.Context, viewerID string, posts []*Post) map[string]bool {
+	if viewerID == "" || len(posts) == 0 {
+		return nil
+	}
+	postIDs := make([]string, 0, len(posts))
+	for _, post := range posts {
+		postIDs = append(postIDs, post.ID.Hex())
+	}
+	likedPostIDs, err := h.svc.repo.ListLikedPostIDs(ctx, viewerID, postIDs)
+	if err != nil {
+		return nil
+	}
+	return likedPostIDs
 }

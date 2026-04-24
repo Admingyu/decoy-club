@@ -9,7 +9,7 @@ import (
 )
 
 func Connect(ctx context.Context, uri string) (*mongo.Client, error) {
-	client, err := mongo.Connect(options.Client().ApplyURI(uri))
+	client, err := mongo.Connect(clientOptions(uri))
 	if err != nil {
 		return nil, err
 	}
@@ -19,4 +19,8 @@ func Connect(ctx context.Context, uri string) (*mongo.Client, error) {
 	}
 
 	return client, nil
+}
+
+func clientOptions(uri string) *options.ClientOptions {
+	return options.Client().ApplyURI(uri).SetRetryWrites(false)
 }

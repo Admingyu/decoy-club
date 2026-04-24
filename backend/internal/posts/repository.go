@@ -39,12 +39,35 @@ func (r *MongoRepository) usersCollection() *mongo.Collection {
 	return r.db.Collection("users")
 }
 
-func (r *MongoRepository) followsCollection() *mongo.Collection {
-	return r.db.Collection("user_follows")
-}
-
 func (r *MongoRepository) likesCollection() *mongo.Collection {
 	return r.db.Collection("post_likes")
+}
+
+func (r *MongoRepository) AdjustCommentCount(ctx context.Context, postID string, delta int64) error {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return err
+	}
+
+	postObjectID, err := bson.ObjectIDFromHex(postID)
+	if err != nil {
+		return ErrPostNotFound
+	}
+
+	now := time.Now().UTC()
+	result, err := r.postsCollection().UpdateOne(ctx, bson.M{
+		"_id":        postObjectID,
+		"is_deleted": false,
+	}, bson.M{
+		"$inc": bson.M{"comment_count": delta},
+		"$set": bson.M{"updated_at": now},
+	})
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount == 0 {
+		return ErrPostNotFound
+	}
+	return nil
 }
 
 func (r *MongoRepository) CreatePost(ctx context.Context, post *Post) (*Post, error) {
@@ -52,37 +75,41 @@ func (r *MongoRepository) CreatePost(ctx context.Context, post *Post) (*Post, er
 		return nil, err
 	}
 
-	return r.runTransaction(ctx, func(sessionCtx context.Context) (*Post, error) {
-		now := time.Now().UTC()
-		if post.ID.IsZero() {
-			post.ID = bson.NewObjectID()
-		}
-		if post.CreatedAt.IsZero() {
-			post.CreatedAt = now
-		}
-		if post.UpdatedAt.IsZero() {
-			post.UpdatedAt = now
-		}
+	now := time.Now().UTC()
+	if post.ID.IsZero() {
+		post.ID = bson.NewObjectID()
+	}
+	if post.CreatedAt.IsZero() {
+		post.CreatedAt = now
+	}
+	if post.UpdatedAt.IsZero() {
+		post.UpdatedAt = now
+	}
 
-		if _, err := r.postsCollection().InsertOne(sessionCtx, post); err != nil {
+	if !post.AuthorID.IsZero() {
+		result, err := r.usersCollection().UpdateOne(ctx, bson.M{"_id": post.AuthorID}, bson.M{
+			"$inc": bson.M{"post_count": int64(1)},
+			"$set": bson.M{"updated_at": now},
+		})
+		if err != nil {
 			return nil, err
 		}
+		if result.MatchedCount == 0 {
+			return nil, users.ErrUserNotFound
+		}
+	}
 
+	if _, err := r.postsCollection().InsertOne(ctx, post); err != nil {
 		if !post.AuthorID.IsZero() {
-			result, err := r.usersCollection().UpdateOne(sessionCtx, bson.M{"_id": post.AuthorID}, bson.M{
-				"$inc": bson.M{"post_count": int64(1)},
+			_, _ = r.usersCollection().UpdateOne(ctx, bson.M{"_id": post.AuthorID}, bson.M{
+				"$inc": bson.M{"post_count": int64(-1)},
 				"$set": bson.M{"updated_at": now},
 			})
-			if err != nil {
-				return nil, err
-			}
-			if result.MatchedCount == 0 {
-				return nil, users.ErrUserNotFound
-			}
 		}
+		return nil, err
+	}
 
-		return post, nil
-	})
+	return post, nil
 }
 
 func (r *MongoRepository) FindPostByID(ctx context.Context, id string) (*Post, error) {
@@ -119,6 +146,9 @@ func (r *MongoRepository) ListPublicTimeline(ctx context.Context, limit int, bef
 	}
 
 	filter := bson.M{"is_deleted": false}
+	if beforeID != "" && (before == nil || before.IsZero()) {
+		return nil, ErrInvalidTimelineCursor
+	}
 	if before != nil && !before.IsZero() {
 		if beforeID != "" {
 			beforeObjectID, err := bson.ObjectIDFromHex(beforeID)
@@ -203,37 +233,33 @@ func (r *MongoRepository) ListFollowingTimeline(ctx context.Context, viewerID st
 		size = 20
 	}
 
-	viewerObjectID, err := bson.ObjectIDFromHex(viewerID)
-	if err != nil {
+	if r.userRepo == nil {
 		return []*Post{}, nil
 	}
 
-	followCursor, err := r.followsCollection().Find(ctx, bson.M{"follower_id": viewerObjectID})
+	followeeIDs, err := r.userRepo.ListFollowingIDs(ctx, viewerID)
 	if err != nil {
-		return nil, err
-	}
-	defer followCursor.Close(ctx)
-
-	followeeIDs := make([]bson.ObjectID, 0)
-	for followCursor.Next(ctx) {
-		var edge struct {
-			FolloweeID bson.ObjectID `bson:"followee_id"`
-		}
-		if err := followCursor.Decode(&edge); err != nil {
-			return nil, err
-		}
-		followeeIDs = append(followeeIDs, edge.FolloweeID)
-	}
-	if err := followCursor.Err(); err != nil {
 		return nil, err
 	}
 	if len(followeeIDs) == 0 {
 		return []*Post{}, nil
 	}
 
+	followeeObjectIDs := make([]bson.ObjectID, 0, len(followeeIDs))
+	for _, followeeID := range followeeIDs {
+		objectID, err := bson.ObjectIDFromHex(followeeID)
+		if err != nil {
+			continue
+		}
+		followeeObjectIDs = append(followeeObjectIDs, objectID)
+	}
+	if len(followeeObjectIDs) == 0 {
+		return []*Post{}, nil
+	}
+
 	filter := bson.M{
 		"is_deleted": false,
-		"author_id": bson.M{"$in": followeeIDs},
+		"author_id":  bson.M{"$in": followeeObjectIDs},
 	}
 	opts := options.Find().
 		SetSort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}).
@@ -252,6 +278,100 @@ func (r *MongoRepository) ListFollowingTimeline(ctx context.Context, viewerID st
 	}
 
 	return posts, nil
+}
+
+func (r *MongoRepository) ListPostsByAuthorID(ctx context.Context, authorID string, limit int) ([]*Post, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	authorObjectID, err := bson.ObjectIDFromHex(authorID)
+	if err != nil {
+		return []*Post{}, nil
+	}
+
+	cursor, err := r.postsCollection().Find(ctx, bson.M{
+		"author_id":  authorObjectID,
+		"is_deleted": false,
+	}, options.Find().
+		SetSort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}).
+		SetLimit(int64(limit)))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var posts []*Post
+	if err := cursor.All(ctx, &posts); err != nil {
+		return nil, err
+	}
+	return posts, nil
+}
+
+func (r *MongoRepository) HasLike(ctx context.Context, postID, userID string) (bool, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return false, err
+	}
+	postObjectID, err := bson.ObjectIDFromHex(postID)
+	if err != nil {
+		return false, nil
+	}
+	userObjectID, err := bson.ObjectIDFromHex(userID)
+	if err != nil {
+		return false, nil
+	}
+	err = r.likesCollection().FindOne(ctx, bson.M{"post_id": postObjectID, "user_id": userObjectID}).Err()
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return false, nil
+	}
+	return false, err
+}
+
+func (r *MongoRepository) ListLikedPostIDs(ctx context.Context, userID string, postIDs []string) (map[string]bool, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return nil, err
+	}
+	if len(postIDs) == 0 {
+		return map[string]bool{}, nil
+	}
+	userObjectID, err := bson.ObjectIDFromHex(userID)
+	if err != nil {
+		return map[string]bool{}, nil
+	}
+	postObjectIDs := make([]bson.ObjectID, 0, len(postIDs))
+	for _, postID := range postIDs {
+		objectID, err := bson.ObjectIDFromHex(postID)
+		if err != nil {
+			continue
+		}
+		postObjectIDs = append(postObjectIDs, objectID)
+	}
+	if len(postObjectIDs) == 0 {
+		return map[string]bool{}, nil
+	}
+	cursor, err := r.likesCollection().Find(ctx, bson.M{
+		"user_id": userObjectID,
+		"post_id": bson.M{"$in": postObjectIDs},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	result := make(map[string]bool)
+	for cursor.Next(ctx) {
+		var edge likeEdge
+		if err := cursor.Decode(&edge); err != nil {
+			return nil, err
+		}
+		result[edge.PostID.Hex()] = true
+	}
+	return result, cursor.Err()
 }
 
 func (r *MongoRepository) CreateLikeIfAbsent(ctx context.Context, postID, userID string) (bool, error) {
@@ -320,18 +440,71 @@ func (r *MongoRepository) RemoveLikeIfPresent(ctx context.Context, postID, userI
 	return result.DeletedCount > 0, nil
 }
 
+func (r *MongoRepository) LikePost(ctx context.Context, postID, userID string) (bool, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return false, err
+	}
+
+	changed, err := r.CreateLikeIfAbsent(ctx, postID, userID)
+	if err != nil || !changed {
+		return changed, err
+	}
+
+	if err := r.updateLikeCounters(ctx, postID, userID, 1); err != nil {
+		_, _ = r.RemoveLikeIfPresent(ctx, postID, userID)
+		_ = r.updateLikeCounters(ctx, postID, userID, -1)
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (r *MongoRepository) UnlikePost(ctx context.Context, postID, userID string) (bool, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return false, err
+	}
+
+	postObjectID, err := bson.ObjectIDFromHex(postID)
+	if err != nil {
+		return false, ErrPostNotFound
+	}
+	userObjectID, err := bson.ObjectIDFromHex(userID)
+	if err != nil {
+		return false, ErrPostNotFound
+	}
+
+	filter := bson.M{"post_id": postObjectID, "user_id": userObjectID}
+	var removed likeEdge
+	if err := r.likesCollection().FindOne(ctx, filter).Decode(&removed); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	result, err := r.likesCollection().DeleteOne(ctx, filter)
+	if err != nil {
+		return false, err
+	}
+	if result.DeletedCount == 0 {
+		return false, nil
+	}
+
+	if err := r.updateLikeCounters(ctx, postID, userID, -1); err != nil {
+		_, _ = r.likesCollection().InsertOne(ctx, removed)
+		_ = r.updateLikeCounters(ctx, postID, userID, 1)
+		return false, err
+	}
+
+	return true, nil
+}
+
 func (r *MongoRepository) ApplyLikeSideEffects(ctx context.Context, postID, userID string) error {
-	_, err := r.runTransaction(ctx, func(sessionCtx context.Context) (*Post, error) {
-		return nil, r.updateLikeCounters(sessionCtx, postID, userID, 1)
-	})
-	return err
+	return r.updateLikeCounters(ctx, postID, userID, 1)
 }
 
 func (r *MongoRepository) RevertLikeSideEffects(ctx context.Context, postID, userID string) error {
-	_, err := r.runTransaction(ctx, func(sessionCtx context.Context) (*Post, error) {
-		return nil, r.updateLikeCounters(sessionCtx, postID, userID, -1)
-	})
-	return err
+	return r.updateLikeCounters(ctx, postID, userID, -1)
 }
 
 func (r *MongoRepository) updateLikeCounters(ctx context.Context, postID, userID string, delta int64) error {
@@ -371,7 +544,10 @@ func (r *MongoRepository) updateLikeCounters(ctx context.Context, postID, userID
 	}
 
 	var post Post
-	if err := r.postsCollection().FindOne(ctx, bson.M{"_id": postObjectID}).Decode(&post); err != nil {
+	if err := r.postsCollection().FindOne(ctx, bson.M{
+		"_id":        postObjectID,
+		"is_deleted": false,
+	}).Decode(&post); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return ErrPostNotFound
 		}
@@ -421,15 +597,6 @@ func (r *MongoRepository) ensureIndexes(ctx context.Context) error {
 		return err
 	}
 
-	if _, err := r.followsCollection().Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{
-			{Key: "follower_id", Value: 1},
-			{Key: "followee_id", Value: 1},
-		},
-	}); err != nil {
-		return err
-	}
-
 	if _, err := r.likesCollection().Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys: bson.D{
 			{Key: "post_id", Value: 1},
@@ -442,38 +609,6 @@ func (r *MongoRepository) ensureIndexes(ctx context.Context) error {
 
 	r.indexesReady = true
 	return nil
-}
-
-func (r *MongoRepository) runTransaction(ctx context.Context, fn func(sessionCtx context.Context) (*Post, error)) (*Post, error) {
-	if r.db == nil {
-		return nil, errors.New("mongo database is nil")
-	}
-
-	client := r.db.Client()
-	if client == nil {
-		return nil, errors.New("mongo client is nil")
-	}
-
-	session, err := client.StartSession()
-	if err != nil {
-		return nil, err
-	}
-	defer session.EndSession(ctx)
-
-	var created *Post
-	_, err = session.WithTransaction(ctx, func(sessionCtx context.Context) (any, error) {
-		var innerErr error
-		created, innerErr = fn(sessionCtx)
-		if innerErr != nil {
-			return nil, innerErr
-		}
-		return nil, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return created, nil
 }
 
 type MemoryRepository struct {
@@ -489,6 +624,22 @@ func NewMemoryRepository(userRepo users.Repository) *MemoryRepository {
 		likes:    make(map[string]map[string]struct{}),
 		userRepo: userRepo,
 	}
+}
+
+func (r *MemoryRepository) AdjustCommentCount(_ context.Context, postID string, delta int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	post, ok := r.posts[postID]
+	if !ok || post.IsDeleted {
+		return ErrPostNotFound
+	}
+	post.CommentCount += delta
+	if post.CommentCount < 0 {
+		post.CommentCount = 0
+	}
+	post.UpdatedAt = time.Now().UTC()
+	return nil
 }
 
 func (r *MemoryRepository) CreatePost(_ context.Context, post *Post) (*Post, error) {
@@ -576,20 +727,25 @@ func (r *MemoryRepository) ListFollowingTimeline(ctx context.Context, viewerID s
 		size = 20
 	}
 
+	if r.userRepo == nil {
+		return []*Post{}, nil
+	}
+
+	followeeIDs, err := r.userRepo.ListFollowingIDs(ctx, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	followees := make(map[string]struct{}, len(followeeIDs))
+	for _, followeeID := range followeeIDs {
+		followees[followeeID] = struct{}{}
+	}
+
 	posts := make([]*Post, 0, len(r.posts))
 	for _, post := range r.posts {
 		if post.IsDeleted {
 			continue
 		}
-		if r.userRepo != nil {
-			following, err := r.userRepo.IsFollowing(ctx, viewerID, post.AuthorID.Hex())
-			if err != nil {
-				return nil, err
-			}
-			if !following {
-				continue
-			}
-		} else {
+		if _, ok := followees[post.AuthorID.Hex()]; !ok {
 			continue
 		}
 		cp := *post
@@ -614,6 +770,62 @@ func (r *MemoryRepository) ListFollowingTimeline(ctx context.Context, viewerID s
 	}
 
 	return posts[start:end], nil
+}
+
+func (r *MemoryRepository) ListPostsByAuthorID(_ context.Context, authorID string, limit int) ([]*Post, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 20
+	}
+
+	posts := make([]*Post, 0, len(r.posts))
+	for _, post := range r.posts {
+		if post.IsDeleted || post.AuthorID.Hex() != authorID {
+			continue
+		}
+		cp := *post
+		posts = append(posts, &cp)
+	}
+
+	sort.Slice(posts, func(i, j int) bool {
+		if posts[i].CreatedAt.Equal(posts[j].CreatedAt) {
+			return posts[i].ID.Hex() > posts[j].ID.Hex()
+		}
+		return posts[i].CreatedAt.After(posts[j].CreatedAt)
+	})
+
+	if len(posts) > limit {
+		posts = posts[:limit]
+	}
+
+	return posts, nil
+}
+
+func (r *MemoryRepository) HasLike(_ context.Context, postID, userID string) (bool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	likesByPost, ok := r.likes[postID]
+	if !ok {
+		return false, nil
+	}
+	_, exists := likesByPost[userID]
+	return exists, nil
+}
+
+func (r *MemoryRepository) ListLikedPostIDs(_ context.Context, userID string, postIDs []string) (map[string]bool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make(map[string]bool)
+	for _, postID := range postIDs {
+		if likesByPost, ok := r.likes[postID]; ok {
+			if _, exists := likesByPost[userID]; exists {
+				result[postID] = true
+			}
+		}
+	}
+	return result, nil
 }
 
 func (r *MemoryRepository) SoftDeletePost(_ context.Context, postID, authorID string) error {
@@ -653,6 +865,27 @@ func (r *MemoryRepository) CreateLikeIfAbsent(_ context.Context, postID, userID 
 	return true, nil
 }
 
+func (r *MemoryRepository) LikePost(_ context.Context, postID, userID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	post, ok := r.posts[postID]
+	if !ok || post.IsDeleted {
+		return false, ErrPostNotFound
+	}
+	if _, ok := r.likes[postID]; !ok {
+		r.likes[postID] = make(map[string]struct{})
+	}
+	if _, exists := r.likes[postID][userID]; exists {
+		return false, nil
+	}
+
+	r.likes[postID][userID] = struct{}{}
+	post.LikeCount++
+	post.UpdatedAt = time.Now().UTC()
+	return true, nil
+}
+
 func (r *MemoryRepository) RemoveLikeIfPresent(_ context.Context, postID, userID string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -668,6 +901,33 @@ func (r *MemoryRepository) RemoveLikeIfPresent(_ context.Context, postID, userID
 	if len(likesByPost) == 0 {
 		delete(r.likes, postID)
 	}
+	return true, nil
+}
+
+func (r *MemoryRepository) UnlikePost(_ context.Context, postID, userID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	post, ok := r.posts[postID]
+	if !ok || post.IsDeleted {
+		return false, ErrPostNotFound
+	}
+	likesByPost, ok := r.likes[postID]
+	if !ok {
+		return false, nil
+	}
+	if _, exists := likesByPost[userID]; !exists {
+		return false, nil
+	}
+
+	delete(likesByPost, userID)
+	if len(likesByPost) == 0 {
+		delete(r.likes, postID)
+	}
+	if post.LikeCount > 0 {
+		post.LikeCount--
+	}
+	post.UpdatedAt = time.Now().UTC()
 	return true, nil
 }
 

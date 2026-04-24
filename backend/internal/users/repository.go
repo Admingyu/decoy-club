@@ -17,6 +17,7 @@ type Repository interface {
 	FindByUsername(ctx context.Context, username string) (*User, error)
 	FindByID(ctx context.Context, id string) (*User, error)
 	IsFollowing(ctx context.Context, followerID, followeeID string) (bool, error)
+	ListFollowingIDs(ctx context.Context, followerID string) ([]string, error)
 	RunFollowTransaction(ctx context.Context, followerID, followeeID string) error
 	RunUnfollowTransaction(ctx context.Context, followerID, followeeID string) error
 }
@@ -111,125 +112,137 @@ func (r *MongoRepository) IsFollowing(ctx context.Context, followerID, followeeI
 	return true, nil
 }
 
-func (r *MongoRepository) RunFollowTransaction(ctx context.Context, followerID, followeeID string) error {
-	return r.runTransaction(ctx, func(sessionCtx context.Context) error {
-		if err := r.ensureIndexes(sessionCtx); err != nil {
-			return err
-		}
+func (r *MongoRepository) ListFollowingIDs(ctx context.Context, followerID string) ([]string, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return nil, err
+	}
 
-		exists, err := r.IsFollowing(sessionCtx, followerID, followeeID)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return nil
-		}
+	followerObjectID, err := bson.ObjectIDFromHex(followerID)
+	if err != nil {
+		return []string{}, nil
+	}
 
-		followerObjectID, err := bson.ObjectIDFromHex(followerID)
-		if err != nil {
-			return ErrUserNotFound
-		}
-		followeeObjectID, err := bson.ObjectIDFromHex(followeeID)
-		if err != nil {
-			return ErrUserNotFound
-		}
+	cursor, err := r.followsCollection().Find(ctx, bson.M{"follower_id": followerObjectID})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
 
-		now := time.Now().UTC()
-		if _, err := r.followsCollection().InsertOne(sessionCtx, followEdge{
-			ID:         bson.NewObjectID(),
-			FollowerID: followerObjectID,
-			FolloweeID: followeeObjectID,
-			CreatedAt:  now,
-		}); err != nil {
-			return err
+	followingIDs := make([]string, 0)
+	for cursor.Next(ctx) {
+		var edge followEdge
+		if err := cursor.Decode(&edge); err != nil {
+			return nil, err
 		}
+		followingIDs = append(followingIDs, edge.FolloweeID.Hex())
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
 
-		if _, err := r.usersCollection().UpdateByID(sessionCtx, followerObjectID, bson.M{
-			"$inc": bson.M{"following_count": int64(1)},
-			"$set": bson.M{"updated_at": now},
-		}); err != nil {
-			return err
-		}
-
-		if _, err := r.usersCollection().UpdateByID(sessionCtx, followeeObjectID, bson.M{
-			"$inc": bson.M{"followers_count": int64(1)},
-			"$set": bson.M{"updated_at": now},
-		}); err != nil {
-			return err
-		}
-
-		return nil
-	})
+	return followingIDs, nil
 }
 
-func (r *MongoRepository) RunUnfollowTransaction(ctx context.Context, followerID, followeeID string) error {
-	return r.runTransaction(ctx, func(sessionCtx context.Context) error {
-		if err := r.ensureIndexes(sessionCtx); err != nil {
-			return err
-		}
+func (r *MongoRepository) RunFollowTransaction(ctx context.Context, followerID, followeeID string) error {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return err
+	}
 
-		followerObjectID, err := bson.ObjectIDFromHex(followerID)
-		if err != nil {
-			return ErrUserNotFound
-		}
-		followeeObjectID, err := bson.ObjectIDFromHex(followeeID)
-		if err != nil {
-			return ErrUserNotFound
-		}
+	followerObjectID, err := bson.ObjectIDFromHex(followerID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+	followeeObjectID, err := bson.ObjectIDFromHex(followeeID)
+	if err != nil {
+		return ErrUserNotFound
+	}
 
-		result, err := r.followsCollection().DeleteOne(sessionCtx, bson.M{
+	now := time.Now().UTC()
+	edge := followEdge{
+		ID:         bson.NewObjectID(),
+		FollowerID: followerObjectID,
+		FolloweeID: followeeObjectID,
+		CreatedAt:  now,
+	}
+	if _, err := r.followsCollection().InsertOne(ctx, edge); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return nil
+		}
+		return err
+	}
+
+	if err := r.adjustFollowCounters(ctx, followerObjectID, followeeObjectID, 1, now); err != nil {
+		_, _ = r.followsCollection().DeleteOne(ctx, bson.M{
 			"follower_id": followerObjectID,
 			"followee_id": followeeObjectID,
 		})
-		if err != nil {
-			return err
-		}
-		if result.DeletedCount == 0 {
-			return nil
-		}
+		_ = r.adjustFollowCounters(ctx, followerObjectID, followeeObjectID, -1, now)
+		return err
+	}
 
-		now := time.Now().UTC()
-		if _, err := r.usersCollection().UpdateByID(sessionCtx, followerObjectID, bson.M{
-			"$inc": bson.M{"following_count": int64(-1)},
-			"$set": bson.M{"updated_at": now},
-		}); err != nil {
-			return err
-		}
-
-		if _, err := r.usersCollection().UpdateByID(sessionCtx, followeeObjectID, bson.M{
-			"$inc": bson.M{"followers_count": int64(-1)},
-			"$set": bson.M{"updated_at": now},
-		}); err != nil {
-			return err
-		}
-
-		return nil
-	})
+	return nil
 }
 
-func (r *MongoRepository) runTransaction(ctx context.Context, fn func(sc context.Context) error) error {
-	if r.db == nil {
-		return errors.New("mongo database is nil")
+func (r *MongoRepository) RunUnfollowTransaction(ctx context.Context, followerID, followeeID string) error {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return err
 	}
 
-	client := r.db.Client()
-	if client == nil {
-		return errors.New("mongo client is nil")
+	followerObjectID, err := bson.ObjectIDFromHex(followerID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+	followeeObjectID, err := bson.ObjectIDFromHex(followeeID)
+	if err != nil {
+		return ErrUserNotFound
 	}
 
-	session, err := client.StartSession()
+	filter := bson.M{
+		"follower_id": followerObjectID,
+		"followee_id": followeeObjectID,
+	}
+	var removed followEdge
+	if err := r.followsCollection().FindOne(ctx, filter).Decode(&removed); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil
+		}
+		return err
+	}
+
+	result, err := r.followsCollection().DeleteOne(ctx, filter)
 	if err != nil {
 		return err
 	}
-	defer session.EndSession(ctx)
+	if result.DeletedCount == 0 {
+		return nil
+	}
 
-	_, err = session.WithTransaction(ctx, func(sessionCtx context.Context) (any, error) {
-		if err := fn(sessionCtx); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	})
-	return err
+	now := time.Now().UTC()
+	if err := r.adjustFollowCounters(ctx, followerObjectID, followeeObjectID, -1, now); err != nil {
+		_, _ = r.followsCollection().InsertOne(ctx, removed)
+		_ = r.adjustFollowCounters(ctx, followerObjectID, followeeObjectID, 1, now)
+		return err
+	}
+
+	return nil
+}
+
+func (r *MongoRepository) adjustFollowCounters(ctx context.Context, followerObjectID, followeeObjectID bson.ObjectID, delta int64, now time.Time) error {
+	if _, err := r.usersCollection().UpdateByID(ctx, followerObjectID, bson.M{
+		"$inc": bson.M{"following_count": delta},
+		"$set": bson.M{"updated_at": now},
+	}); err != nil {
+		return err
+	}
+
+	if _, err := r.usersCollection().UpdateByID(ctx, followeeObjectID, bson.M{
+		"$inc": bson.M{"followers_count": delta},
+		"$set": bson.M{"updated_at": now},
+	}); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *MongoRepository) ensureIndexes(ctx context.Context) error {
@@ -279,6 +292,22 @@ func NewMemoryRepository() *MemoryRepository {
 	}
 }
 
+func (r *MemoryRepository) Seed(user *User) {
+	if user == nil {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	cp := *user
+	if cp.ID.IsZero() {
+		cp.ID = bson.NewObjectID()
+	}
+	r.users[cp.Username] = &cp
+	r.usersByID[cp.ID.Hex()] = &cp
+}
+
 func (r *MemoryRepository) ensureUser(username string) *User {
 	user, ok := r.users[username]
 	if !ok {
@@ -325,6 +354,23 @@ func (r *MemoryRepository) IsFollowing(_ context.Context, followerID, followeeID
 	}
 	_, ok = edges[followeeID]
 	return ok, nil
+}
+
+func (r *MemoryRepository) ListFollowingIDs(_ context.Context, followerID string) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	edges, ok := r.follows[followerID]
+	if !ok {
+		return []string{}, nil
+	}
+
+	followingIDs := make([]string, 0, len(edges))
+	for followeeID := range edges {
+		followingIDs = append(followingIDs, followeeID)
+	}
+
+	return followingIDs, nil
 }
 
 func (r *MemoryRepository) RunFollowTransaction(_ context.Context, followerID, followeeID string) error {

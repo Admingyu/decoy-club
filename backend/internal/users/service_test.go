@@ -100,6 +100,20 @@ func (r *fakeUserRepo) IsFollowing(_ context.Context, followerID, followeeID str
 	return ok, nil
 }
 
+func (r *fakeUserRepo) ListFollowingIDs(_ context.Context, followerID string) ([]string, error) {
+	edges, ok := r.follows[followerID]
+	if !ok {
+		return []string{}, nil
+	}
+
+	followingIDs := make([]string, 0, len(edges))
+	for followeeID := range edges {
+		followingIDs = append(followingIDs, followeeID)
+	}
+
+	return followingIDs, nil
+}
+
 func (r *fakeUserRepo) RunFollowTransaction(_ context.Context, followerID, followeeID string) error {
 	if followerID == followeeID {
 		return ErrCannotFollowSelf
