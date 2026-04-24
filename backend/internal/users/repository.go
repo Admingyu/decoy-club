@@ -22,9 +22,9 @@ type Repository interface {
 }
 
 type MongoRepository struct {
-	db          *mongo.Database
-	indexesOnce sync.Once
-	indexesErr  error
+	db           *mongo.Database
+	indexesMu    sync.Mutex
+	indexesReady bool
 }
 
 type followEdge struct {
@@ -233,22 +233,35 @@ func (r *MongoRepository) runTransaction(ctx context.Context, fn func(sc context
 }
 
 func (r *MongoRepository) ensureIndexes(ctx context.Context) error {
-	r.indexesOnce.Do(func() {
-		if r.db == nil {
-			r.indexesErr = errors.New("mongo database is nil")
-			return
-		}
+	r.indexesMu.Lock()
+	defer r.indexesMu.Unlock()
 
-		_, r.indexesErr = r.followsCollection().Indexes().CreateOne(ctx, mongo.IndexModel{
-			Keys: bson.D{
-				{Key: "follower_id", Value: 1},
-				{Key: "followee_id", Value: 1},
-			},
-			Options: options.Index().SetUnique(true),
-		})
-	})
+	if r.indexesReady {
+		return nil
+	}
+	if r.db == nil {
+		return errors.New("mongo database is nil")
+	}
 
-	return r.indexesErr
+	if _, err := r.usersCollection().Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "username", Value: 1}},
+		Options: options.Index().SetUnique(true),
+	}); err != nil {
+		return err
+	}
+
+	if _, err := r.followsCollection().Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "follower_id", Value: 1},
+			{Key: "followee_id", Value: 1},
+		},
+		Options: options.Index().SetUnique(true),
+	}); err != nil {
+		return err
+	}
+
+	r.indexesReady = true
+	return nil
 }
 
 type MemoryRepository struct {

@@ -71,7 +71,7 @@ func (h *Handler) followAction(c *gin.Context, action func(ctx context.Context, 
 		return
 	}
 
-	profile, err := h.svc.GetProfile(c.Request.Context(), username, viewerID)
+	profile, err := h.svc.GetProfileForUser(c.Request.Context(), followee, viewerID)
 	if err != nil {
 		status := http.StatusBadRequest
 		if err == ErrUserNotFound {

@@ -25,6 +25,18 @@ func (s *Service) GetProfile(ctx context.Context, username, viewerID string) (*P
 		return nil, err
 	}
 
+	return s.profileFromUser(ctx, user, viewerID)
+}
+
+func (s *Service) GetProfileForUser(ctx context.Context, user *User, viewerID string) (*Profile, error) {
+	if user == nil {
+		return nil, ErrUserNotFound
+	}
+
+	return s.profileFromUser(ctx, user, viewerID)
+}
+
+func (s *Service) profileFromUser(ctx context.Context, user *User, viewerID string) (*Profile, error) {
 	profile := &Profile{
 		Username:          user.Username,
 		AvatarURL:         user.AvatarURL,
