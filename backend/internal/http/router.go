@@ -8,6 +8,7 @@ import (
 	"decoy-club/backend/internal/common/middleware"
 	"decoy-club/backend/internal/common/response"
 	"decoy-club/backend/internal/config"
+	"decoy-club/backend/internal/posts"
 	"decoy-club/backend/internal/users"
 
 	"github.com/gin-gonic/gin"
@@ -48,6 +49,15 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 	userService := users.NewService(userRepo)
 	userHandler := users.NewHandler(userService)
 
+	var postRepo posts.Repository
+	if deps != nil && deps.Database != nil {
+		postRepo = posts.NewMongoRepository(deps.Database)
+	} else {
+		postRepo = posts.NewMemoryRepository()
+	}
+	postService := posts.NewService(postRepo)
+	postHandler := posts.NewHandler(postService)
+
 	api := router.Group("/api/v1")
 	api.GET("/health", func(c *gin.Context) {
 		response.JSON(c, http.StatusOK, gin.H{"status": "ok"})
@@ -61,6 +71,13 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 	authedUsers := api.Group("/users", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
 	authedUsers.POST("/:username/follow", userHandler.Follow)
 	authedUsers.DELETE("/:username/follow", userHandler.Unfollow)
+
+	api.GET("/posts", postHandler.ListPublicTimeline)
+	api.GET("/posts/:postId", postHandler.GetPost)
+
+	authedPosts := api.Group("/posts", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
+	authedPosts.POST("", postHandler.CreatePost)
+	authedPosts.DELETE("/:postId", postHandler.DeletePost)
 
 	return router
 }
