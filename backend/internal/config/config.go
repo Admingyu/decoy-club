@@ -1,32 +1,60 @@
 package config
 
-import "os"
+import (
+	"os"
+	"path/filepath"
+
+	"github.com/goccy/go-yaml"
+)
 
 type Config struct {
-	Port           string
-	MongoURI       string
-	DatabaseName   string
-	JWTSecret      string
-	PublicBaseURL  string
-	UploadDir      string
-	FrontendOrigin string
+	Port           string `yaml:"port"`
+	MongoURI       string `yaml:"mongo_uri"`
+	DatabaseName   string `yaml:"database_name"`
+	JWTSecret      string `yaml:"jwt_secret"`
+	PublicBaseURL  string `yaml:"public_base_url"`
+	UploadDir      string `yaml:"upload_dir"`
+	FrontendOrigin string `yaml:"frontend_origin"`
 }
 
-func Load() Config {
+func Load() (Config, error) {
+	return LoadFile(defaultConfigPath())
+}
+
+func LoadFile(path string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+
+	cfg := defaultConfig()
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func defaultConfigPath() string {
+	candidates := []string{
+		"config.yml",
+		filepath.Join("backend", "config.yml"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return "config.yml"
+}
+
+func defaultConfig() Config {
 	return Config{
-		Port:           getEnv("PORT", ":8080"),
-		MongoURI:       getEnv("MONGO_URI", "mongodb://localhost:27017"),
-		DatabaseName:   getEnv("DATABASE_NAME", "decoy_club"),
-		JWTSecret:      getEnv("JWT_SECRET", "dev-jwt-secret"),
-		PublicBaseURL:  getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
-		UploadDir:      getEnv("UPLOAD_DIR", "./uploads"),
-		FrontendOrigin: getEnv("FRONTEND_ORIGIN", "http://localhost:3000"),
+		Port:           ":8080",
+		MongoURI:       "mongodb://localhost:27017",
+		DatabaseName:   "decoy_club",
+		JWTSecret:      "dev-jwt-secret",
+		PublicBaseURL:  "http://localhost:8080",
+		UploadDir:      "./uploads",
+		FrontendOrigin: "http://localhost:3000",
 	}
-}
-
-func getEnv(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
 }
