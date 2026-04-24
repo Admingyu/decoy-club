@@ -51,9 +51,9 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 
 	var postRepo posts.Repository
 	if deps != nil && deps.Database != nil {
-		postRepo = posts.NewMongoRepository(deps.Database)
+		postRepo = posts.NewMongoRepository(deps.Database, userRepo)
 	} else {
-		postRepo = posts.NewMemoryRepository()
+		postRepo = posts.NewMemoryRepository(userRepo)
 	}
 	postService := posts.NewService(postRepo)
 	postHandler := posts.NewHandler(postService)
@@ -78,6 +78,11 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 	authedPosts := api.Group("/posts", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
 	authedPosts.POST("", postHandler.CreatePost)
 	authedPosts.DELETE("/:postId", postHandler.DeletePost)
+	authedPosts.POST("/:postId/like", postHandler.LikePost)
+	authedPosts.DELETE("/:postId/like", postHandler.UnlikePost)
+
+	authedTimeline := api.Group("/timeline", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
+	authedTimeline.GET("/following", postHandler.ListFollowingTimeline)
 
 	return router
 }

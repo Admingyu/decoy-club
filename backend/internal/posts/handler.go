@@ -1,6 +1,7 @@
 package posts
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -39,11 +40,15 @@ func (h *Handler) CreatePost(c *gin.Context) {
 		EmbeddedImages:  req.EmbeddedImages,
 	})
 	if err != nil {
-		response.JSON(c, http.StatusBadRequest, gin.H{"error": err.Error()})
+		status := http.StatusBadRequest
+		if err == ErrInvalidAuthorID {
+			status = http.StatusUnauthorized
+		}
+		response.JSON(c, status, gin.H{"error": err.Error()})
 		return
 	}
 
-	response.JSON(c, http.StatusCreated, CreatePostResponse{Post: post})
+	response.JSON(c, http.StatusCreated, CreatePostResponse{Post: NewPostView(post)})
 }
 
 func (h *Handler) ListPublicTimeline(c *gin.Context) {
@@ -55,19 +60,20 @@ func (h *Handler) ListPublicTimeline(c *gin.Context) {
 	}
 
 	var before *time.Time
+	beforeID := c.Query("before_id")
 	if raw := c.Query("before"); raw != "" {
 		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
 			before = &parsed
 		}
 	}
 
-	posts, err := h.svc.ListPublicTimeline(c.Request.Context(), limit, before)
+	posts, err := h.svc.ListPublicTimeline(c.Request.Context(), limit, before, beforeID)
 	if err != nil {
 		response.JSON(c, http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	response.JSON(c, http.StatusOK, PublicTimelineResponse{Posts: posts})
+	response.JSON(c, http.StatusOK, PublicTimelineResponse{Posts: NewPostViews(posts)})
 }
 
 func (h *Handler) GetPost(c *gin.Context) {
@@ -82,7 +88,7 @@ func (h *Handler) GetPost(c *gin.Context) {
 		return
 	}
 
-	response.JSON(c, http.StatusOK, PostResponse{Post: post})
+	response.JSON(c, http.StatusOK, PostResponse{Post: NewPostView(post)})
 }
 
 func (h *Handler) DeletePost(c *gin.Context) {
@@ -103,4 +109,61 @@ func (h *Handler) DeletePost(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) LikePost(c *gin.Context) {
+	h.likeAction(c, h.svc.LikePost)
+}
+
+func (h *Handler) UnlikePost(c *gin.Context) {
+	h.likeAction(c, h.svc.UnlikePost)
+}
+
+func (h *Handler) likeAction(c *gin.Context, action func(ctx context.Context, postID, userID string) error) {
+	viewerID := c.GetString(users.ContextKeyViewerID)
+	if viewerID == "" {
+		response.JSON(c, http.StatusUnauthorized, gin.H{"error": "missing viewer identity"})
+		return
+	}
+
+	if err := action(c.Request.Context(), c.Param("postId"), viewerID); err != nil {
+		status := http.StatusBadRequest
+		if err == ErrPostNotFound {
+			status = http.StatusNotFound
+		}
+		response.JSON(c, status, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) ListFollowingTimeline(c *gin.Context) {
+	viewerID := c.GetString(users.ContextKeyViewerID)
+	if viewerID == "" {
+		response.JSON(c, http.StatusUnauthorized, gin.H{"error": "missing viewer identity"})
+		return
+	}
+
+	page := 1
+	if raw := c.Query("page"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	size := 20
+	if raw := c.Query("size"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			size = parsed
+		}
+	}
+
+	posts, err := h.svc.ListFollowingTimeline(c.Request.Context(), viewerID, page, size)
+	if err != nil {
+		response.JSON(c, http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	response.JSON(c, http.StatusOK, FollowingTimelineResponse{Posts: NewPostViews(posts)})
 }
