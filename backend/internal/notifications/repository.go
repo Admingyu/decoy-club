@@ -16,7 +16,7 @@ var ErrNotificationNotFound = errors.New("notification not found")
 
 type Repository interface {
 	CreateNotification(ctx context.Context, notification *Notification) (*Notification, error)
-	ListNotifications(ctx context.Context, recipientUserID string, unreadOnly bool, page, pageSize int) ([]*Notification, error)
+	ListNotifications(ctx context.Context, recipientUserID string, unreadOnly bool, types []NotificationType, page, pageSize int) ([]*Notification, error)
 	FindNotificationByID(ctx context.Context, notificationID, recipientUserID string) (*Notification, error)
 	CountUnread(ctx context.Context, recipientUserID string) (map[NotificationType]int64, int64, error)
 	MarkRead(ctx context.Context, recipientUserID string, notificationIDs []string) error
@@ -56,7 +56,7 @@ func (r *MongoRepository) CreateNotification(ctx context.Context, notification *
 	return &created, nil
 }
 
-func (r *MongoRepository) ListNotifications(ctx context.Context, recipientUserID string, unreadOnly bool, page, pageSize int) ([]*Notification, error) {
+func (r *MongoRepository) ListNotifications(ctx context.Context, recipientUserID string, unreadOnly bool, types []NotificationType, page, pageSize int) ([]*Notification, error) {
 	if err := r.ensureIndexes(ctx); err != nil {
 		return nil, err
 	}
@@ -74,6 +74,9 @@ func (r *MongoRepository) ListNotifications(ctx context.Context, recipientUserID
 	filter := bson.M{"recipient_user_id": recipientObjectID}
 	if unreadOnly {
 		filter["is_read"] = false
+	}
+	if len(types) > 0 {
+		filter["type"] = bson.M{"$in": types}
 	}
 
 	opts := options.Find().
@@ -235,7 +238,7 @@ func (r *MemoryRepository) CreateNotification(_ context.Context, notification *N
 	return &created, nil
 }
 
-func (r *MemoryRepository) ListNotifications(_ context.Context, recipientUserID string, unreadOnly bool, page, pageSize int) ([]*Notification, error) {
+func (r *MemoryRepository) ListNotifications(_ context.Context, recipientUserID string, unreadOnly bool, types []NotificationType, page, pageSize int) ([]*Notification, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -246,12 +249,21 @@ func (r *MemoryRepository) ListNotifications(_ context.Context, recipientUserID 
 		pageSize = 20
 	}
 	result := make([]*Notification, 0)
+	typeSet := make(map[NotificationType]struct{}, len(types))
+	for _, notificationType := range types {
+		typeSet[notificationType] = struct{}{}
+	}
 	for _, notification := range r.notifications {
 		if notification.RecipientUserID.Hex() != recipientUserID {
 			continue
 		}
 		if unreadOnly && notification.IsRead {
 			continue
+		}
+		if len(typeSet) > 0 {
+			if _, ok := typeSet[notification.Type]; !ok {
+				continue
+			}
 		}
 		cp := *notification
 		result = append(result, &cp)

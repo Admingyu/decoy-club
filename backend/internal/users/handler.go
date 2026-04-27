@@ -2,6 +2,7 @@ package users
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	"decoy-club/backend/internal/common/response"
@@ -40,6 +41,32 @@ func (h *Handler) Follow(c *gin.Context) {
 
 func (h *Handler) Unfollow(c *gin.Context) {
 	h.followAction(c, h.svc.Unfollow)
+}
+
+func (h *Handler) UpdateStatus(c *gin.Context) {
+	viewerID := c.GetString(ContextKeyViewerID)
+	if viewerID == "" {
+		response.JSON(c, http.StatusUnauthorized, gin.H{"error": "missing viewer identity"})
+		return
+	}
+
+	var req UpdateStatusRequest
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		response.JSON(c, http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	profile, err := h.svc.UpdateStatus(c.Request.Context(), viewerID, req.StatusText, req.StatusPreset)
+	if err != nil {
+		status := http.StatusBadRequest
+		if err == ErrUserNotFound {
+			status = http.StatusNotFound
+		}
+		response.JSON(c, status, gin.H{"error": err.Error()})
+		return
+	}
+
+	response.JSON(c, http.StatusOK, ProfileResponse{Profile: *profile})
 }
 
 func (h *Handler) followAction(c *gin.Context, action func(ctx context.Context, followerID, followeeID string) error) {

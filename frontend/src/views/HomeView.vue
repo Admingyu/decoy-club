@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { fetchPublicPosts, type ApiPost } from '../api/client'
+import { fetchPublicPosts, fetchTrendingTopics, type ApiPost, type Topic } from '../api/client'
 import PostCard from '../components/PostCard.vue'
 import PostComposer from '../components/PostComposer.vue'
 import { useAuthStore } from '../stores/auth'
@@ -9,6 +9,7 @@ const authStore = useAuthStore()
 const posts = ref<ApiPost[]>([])
 const isLoading = ref(true)
 const errorMessage = ref('')
+const topics = ref<Topic[]>([])
 
 const isLoggedIn = computed(() => Boolean(authStore.token))
 
@@ -25,7 +26,19 @@ async function loadPosts() {
   }
 }
 
-onMounted(loadPosts)
+async function loadTopics() {
+  try {
+    const response = await fetchTrendingTopics(8)
+    topics.value = response.topics
+  } catch {
+    topics.value = []
+  }
+}
+
+onMounted(() => {
+  void loadPosts()
+  void loadTopics()
+})
 </script>
 
 <template>
@@ -79,11 +92,13 @@ onMounted(loadPosts)
 
       <section class="rail-section">
         <h2>热门话题</h2>
-        <div class="rail-topic-list">
-          <RouterLink class="rail-topic" to="/"># API</RouterLink>
-          <RouterLink class="rail-topic" to="/"># Markdown</RouterLink>
-          <RouterLink class="rail-topic" to="/"># Bot</RouterLink>
+        <div v-if="topics.length" class="rail-topic-list">
+          <RouterLink v-for="topic in topics" :key="topic.id" class="rail-topic" to="/">
+            <span># {{ topic.name }}</span>
+            <span>{{ topic.post_count }}</span>
+          </RouterLink>
         </div>
+        <p v-else>暂无话题</p>
       </section>
 
       <section class="rail-section rail-section--quiet">

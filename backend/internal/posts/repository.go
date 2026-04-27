@@ -43,6 +43,10 @@ func (r *MongoRepository) likesCollection() *mongo.Collection {
 	return r.db.Collection("post_likes")
 }
 
+func (r *MongoRepository) topicsCollection() *mongo.Collection {
+	return r.db.Collection("topics")
+}
+
 func (r *MongoRepository) AdjustCommentCount(ctx context.Context, postID string, delta int64) error {
 	if err := r.ensureIndexes(ctx); err != nil {
 		return err
@@ -106,6 +110,10 @@ func (r *MongoRepository) CreatePost(ctx context.Context, post *Post) (*Post, er
 				"$set": bson.M{"updated_at": now},
 			})
 		}
+		return nil, err
+	}
+	if err := r.adjustTopics(ctx, post.Topics, 1, post.CreatedAt); err != nil {
+		_, _ = r.postsCollection().DeleteOne(ctx, bson.M{"_id": post.ID})
 		return nil, err
 	}
 
@@ -217,8 +225,35 @@ func (r *MongoRepository) SoftDeletePost(ctx context.Context, postID, authorID s
 	if result.MatchedCount == 0 {
 		return ErrPostNotFound
 	}
+	var post Post
+	if err := r.postsCollection().FindOne(ctx, bson.M{"_id": postObjectID}).Decode(&post); err == nil {
+		_ = r.adjustTopics(ctx, post.Topics, -1, now)
+	}
 
 	return nil
+}
+
+func (r *MongoRepository) ListTrendingTopics(ctx context.Context, limit int) ([]*Topic, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	cursor, err := r.topicsCollection().Find(ctx, bson.M{"post_count": bson.M{"$gt": 0}}, options.Find().
+		SetSort(bson.D{{Key: "post_count", Value: -1}, {Key: "last_post_at", Value: -1}, {Key: "name", Value: 1}}).
+		SetLimit(int64(limit)))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var topics []*Topic
+	if err := cursor.All(ctx, &topics); err != nil {
+		return nil, err
+	}
+	return topics, nil
 }
 
 func (r *MongoRepository) ListFollowingTimeline(ctx context.Context, viewerID string, page, size int) ([]*Post, error) {
@@ -607,13 +642,59 @@ func (r *MongoRepository) ensureIndexes(ctx context.Context) error {
 		return err
 	}
 
+	if _, err := r.postsCollection().Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "topics", Value: 1}},
+	}); err != nil {
+		return err
+	}
+
+	if _, err := r.topicsCollection().Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "name", Value: 1}},
+		Options: options.Index().SetUnique(true),
+	}); err != nil {
+		return err
+	}
+
 	r.indexesReady = true
+	return nil
+}
+
+func (r *MongoRepository) adjustTopics(ctx context.Context, topics []string, delta int64, lastPostAt time.Time) error {
+	if len(topics) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	for _, topic := range topics {
+		if topic == "" {
+			continue
+		}
+		update := bson.M{
+			"$inc": bson.M{"post_count": delta},
+			"$set": bson.M{"updated_at": now},
+			"$setOnInsert": bson.M{
+				"_id":        bson.NewObjectID(),
+				"name":       topic,
+				"created_at": now,
+			},
+		}
+		if delta > 0 {
+			update["$max"] = bson.M{"last_post_at": lastPostAt}
+		}
+		opts := options.UpdateOne()
+		if delta > 0 {
+			opts.SetUpsert(true)
+		}
+		if _, err := r.topicsCollection().UpdateOne(ctx, bson.M{"name": topic}, update, opts); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 type MemoryRepository struct {
 	mu       sync.RWMutex
 	posts    map[string]*Post
+	topics   map[string]*Topic
 	likes    map[string]map[string]struct{}
 	userRepo users.Repository
 }
@@ -621,6 +702,7 @@ type MemoryRepository struct {
 func NewMemoryRepository(userRepo users.Repository) *MemoryRepository {
 	return &MemoryRepository{
 		posts:    make(map[string]*Post),
+		topics:   make(map[string]*Topic),
 		likes:    make(map[string]map[string]struct{}),
 		userRepo: userRepo,
 	}
@@ -658,7 +740,9 @@ func (r *MemoryRepository) CreatePost(_ context.Context, post *Post) (*Post, err
 	}
 
 	cp := *post
+	cp.Topics = append([]string{}, post.Topics...)
 	r.posts[post.ID.Hex()] = &cp
+	r.adjustTopicsLocked(cp.Topics, 1, cp.CreatedAt)
 	return &cp, nil
 }
 
@@ -833,7 +917,7 @@ func (r *MemoryRepository) SoftDeletePost(_ context.Context, postID, authorID st
 	defer r.mu.Unlock()
 
 	post, ok := r.posts[postID]
-	if !ok {
+	if !ok || post.IsDeleted {
 		return ErrPostNotFound
 	}
 	if post.AuthorID.Hex() != authorID {
@@ -844,7 +928,37 @@ func (r *MemoryRepository) SoftDeletePost(_ context.Context, postID, authorID st
 	post.IsDeleted = true
 	post.DeletedAt = &now
 	post.UpdatedAt = now
+	r.adjustTopicsLocked(post.Topics, -1, now)
 	return nil
+}
+
+func (r *MemoryRepository) ListTrendingTopics(_ context.Context, limit int) ([]*Topic, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if limit <= 0 {
+		limit = 10
+	}
+	topics := make([]*Topic, 0, len(r.topics))
+	for _, topic := range r.topics {
+		if topic.PostCount <= 0 {
+			continue
+		}
+		cp := *topic
+		topics = append(topics, &cp)
+	}
+	sort.Slice(topics, func(i, j int) bool {
+		if topics[i].PostCount == topics[j].PostCount {
+			if topics[i].LastPostAt.Equal(topics[j].LastPostAt) {
+				return topics[i].Name < topics[j].Name
+			}
+			return topics[i].LastPostAt.After(topics[j].LastPostAt)
+		}
+		return topics[i].PostCount > topics[j].PostCount
+	})
+	if len(topics) > limit {
+		topics = topics[:limit]
+	}
+	return topics, nil
 }
 
 func (r *MemoryRepository) CreateLikeIfAbsent(_ context.Context, postID, userID string) (bool, error) {
@@ -973,6 +1087,35 @@ func (r *MemoryRepository) RevertLikeSideEffects(_ context.Context, postID, user
 	now := time.Now().UTC()
 	post.UpdatedAt = now
 	return nil
+}
+
+func (r *MemoryRepository) adjustTopicsLocked(topics []string, delta int64, lastPostAt time.Time) {
+	if len(topics) == 0 {
+		return
+	}
+	now := time.Now().UTC()
+	for _, name := range topics {
+		if name == "" {
+			continue
+		}
+		topic, ok := r.topics[name]
+		if !ok {
+			topic = &Topic{
+				ID:        bson.NewObjectID(),
+				Name:      name,
+				CreatedAt: now,
+			}
+			r.topics[name] = topic
+		}
+		topic.PostCount += delta
+		if topic.PostCount < 0 {
+			topic.PostCount = 0
+		}
+		topic.UpdatedAt = now
+		if delta > 0 && lastPostAt.After(topic.LastPostAt) {
+			topic.LastPostAt = lastPostAt
+		}
+	}
 }
 
 var _ Repository = (*MongoRepository)(nil)

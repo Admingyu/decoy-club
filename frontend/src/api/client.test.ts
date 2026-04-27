@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizePost, type ApiPost } from './client'
+import { normalizeActivityResponse, normalizePost, type ApiPost } from './client'
 
 const basePost: ApiPost = {
   id: 'post-1',
@@ -18,5 +18,11 @@ describe('normalizePost', () => {
     const post = { ...basePost, embedded_images: null } as unknown as ApiPost
 
     expect(normalizePost(post).embedded_images).toEqual([])
+  })
+})
+
+describe('normalizeActivityResponse', () => {
+  it('normalizes null activity lists from existing API data', () => {
+    expect(normalizeActivityResponse({ activities: null }).activities).toEqual([])
   })
 })

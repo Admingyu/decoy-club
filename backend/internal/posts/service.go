@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"decoy-club/backend/internal/common/textparse"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
@@ -16,6 +17,7 @@ type Repository interface {
 	CreatePost(ctx context.Context, post *Post) (*Post, error)
 	FindPostByID(ctx context.Context, id string) (*Post, error)
 	ListPublicTimeline(ctx context.Context, limit int, before *time.Time, beforeID string) ([]*Post, error)
+	ListTrendingTopics(ctx context.Context, limit int) ([]*Topic, error)
 	ListFollowingTimeline(ctx context.Context, viewerID string, page, size int) ([]*Post, error)
 	ListPostsByAuthorID(ctx context.Context, authorID string, limit int) ([]*Post, error)
 	HasLike(ctx context.Context, postID, userID string) (bool, error)
@@ -27,11 +29,18 @@ type Repository interface {
 
 type LikeNotifier interface {
 	NotifyPostLiked(ctx context.Context, postID, actorUserID string) error
+	NotifyPostMentioned(ctx context.Context, postID, actorUserID string, mentionedUsernames []string) error
+}
+
+type ActivityRecorder interface {
+	RecordPostView(ctx context.Context, userID, postID string) error
+	RecordPostLike(ctx context.Context, userID, postID string) error
 }
 
 type Service struct {
-	repo     Repository
-	notifier LikeNotifier
+	repo             Repository
+	notifier         LikeNotifier
+	activityRecorder ActivityRecorder
 }
 
 type CreatePostInput struct {
@@ -40,8 +49,12 @@ type CreatePostInput struct {
 	EmbeddedImages  []string
 }
 
-func NewService(repo Repository, notifier LikeNotifier) *Service {
-	return &Service{repo: repo, notifier: notifier}
+func NewService(repo Repository, notifier LikeNotifier, recorders ...ActivityRecorder) *Service {
+	var recorder ActivityRecorder
+	if len(recorders) > 0 {
+		recorder = recorders[0]
+	}
+	return &Service{repo: repo, notifier: notifier, activityRecorder: recorder}
 }
 
 func (s *Service) CreatePost(ctx context.Context, input CreatePostInput) (*Post, error) {
@@ -51,6 +64,7 @@ func (s *Service) CreatePost(ctx context.Context, input CreatePostInput) (*Post,
 	}
 
 	html := RenderMarkdown(input.ContentMarkdown)
+	topics := textparse.ExtractTopics(input.ContentMarkdown)
 	now := time.Now().UTC()
 
 	post := &Post{
@@ -58,6 +72,7 @@ func (s *Service) CreatePost(ctx context.Context, input CreatePostInput) (*Post,
 		ContentMarkdown: input.ContentMarkdown,
 		ContentHTML:     html,
 		EmbeddedImages:  append([]string(nil), input.EmbeddedImages...),
+		Topics:          topics,
 		LikeCount:       0,
 		CommentCount:    0,
 		IsDeleted:       false,
@@ -65,7 +80,16 @@ func (s *Service) CreatePost(ctx context.Context, input CreatePostInput) (*Post,
 		UpdatedAt:       now,
 	}
 
-	return s.repo.CreatePost(ctx, post)
+	created, err := s.repo.CreatePost(ctx, post)
+	if err != nil {
+		return nil, err
+	}
+	if s.notifier != nil {
+		if err := s.notifier.NotifyPostMentioned(ctx, created.ID.Hex(), input.AuthorID, textparse.ExtractMentions(input.ContentMarkdown)); err != nil {
+			return nil, err
+		}
+	}
+	return created, nil
 }
 
 func (s *Service) ListPublicTimeline(ctx context.Context, limit int, before *time.Time, beforeID string) ([]*Post, error) {
@@ -73,6 +97,10 @@ func (s *Service) ListPublicTimeline(ctx context.Context, limit int, before *tim
 		return nil, ErrInvalidTimelineCursor
 	}
 	return s.repo.ListPublicTimeline(ctx, limit, before, beforeID)
+}
+
+func (s *Service) ListTrendingTopics(ctx context.Context, limit int) ([]*Topic, error) {
+	return s.repo.ListTrendingTopics(ctx, limit)
 }
 
 func (s *Service) ListFollowingTimeline(ctx context.Context, viewerID string, page, size int) ([]*Post, error) {
@@ -87,6 +115,13 @@ func (s *Service) GetPost(ctx context.Context, postID string) (*Post, error) {
 	return s.repo.FindPostByID(ctx, postID)
 }
 
+func (s *Service) RecordPostView(ctx context.Context, userID, postID string) error {
+	if s.activityRecorder == nil || userID == "" || postID == "" {
+		return nil
+	}
+	return s.activityRecorder.RecordPostView(ctx, userID, postID)
+}
+
 func (s *Service) DeletePost(ctx context.Context, postID, authorID string) error {
 	return s.repo.SoftDeletePost(ctx, postID, authorID)
 }
@@ -97,7 +132,12 @@ func (s *Service) LikePost(ctx context.Context, postID, userID string) error {
 		return err
 	}
 	if changed && s.notifier != nil {
-		return s.notifier.NotifyPostLiked(ctx, postID, userID)
+		if err := s.notifier.NotifyPostLiked(ctx, postID, userID); err != nil {
+			return err
+		}
+	}
+	if changed && s.activityRecorder != nil {
+		return s.activityRecorder.RecordPostLike(ctx, userID, postID)
 	}
 	return nil
 }

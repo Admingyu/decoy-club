@@ -77,6 +77,23 @@ func (h *Handler) ListPublicTimeline(c *gin.Context) {
 	response.JSON(c, http.StatusOK, PublicTimelineResponse{Posts: h.newPostViews(c.Request.Context(), posts, c.GetString(users.ContextKeyViewerID))})
 }
 
+func (h *Handler) ListTrendingTopics(c *gin.Context) {
+	limit := 10
+	if raw := c.Query("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	topics, err := h.svc.ListTrendingTopics(c.Request.Context(), limit)
+	if err != nil {
+		response.JSON(c, http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	response.JSON(c, http.StatusOK, TrendingTopicsResponse{Topics: NewTopicViews(topics)})
+}
+
 func (h *Handler) GetPost(c *gin.Context) {
 	postID := c.Param("postId")
 	post, err := h.svc.GetPost(c.Request.Context(), postID)
@@ -89,7 +106,9 @@ func (h *Handler) GetPost(c *gin.Context) {
 		return
 	}
 
-	response.JSON(c, http.StatusOK, PostResponse{Post: h.newPostView(c.Request.Context(), post, c.GetString(users.ContextKeyViewerID))})
+	viewerID := c.GetString(users.ContextKeyViewerID)
+	_ = h.svc.RecordPostView(c.Request.Context(), viewerID, post.ID.Hex())
+	response.JSON(c, http.StatusOK, PostResponse{Post: h.newPostView(c.Request.Context(), post, viewerID)})
 }
 
 func (h *Handler) DeletePost(c *gin.Context) {

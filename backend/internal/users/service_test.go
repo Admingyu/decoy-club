@@ -47,6 +47,30 @@ func TestFollowIsIdempotentForDuplicateRequests(t *testing.T) {
 	}
 }
 
+func TestUpdateStatusTrimsAndPersistsStatus(t *testing.T) {
+	repo := newFakeUserRepo()
+	svc := NewService(repo)
+
+	profile, err := svc.UpdateStatus(context.Background(), "507f1f77bcf86cd799439011", "  building tonight  ", "  coding  ")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	if profile.StatusText != "building tonight" || profile.StatusPreset != "coding" {
+		t.Fatalf("expected trimmed status to be saved, got %+v", profile)
+	}
+}
+
+func TestUpdateStatusRejectsTooLongText(t *testing.T) {
+	repo := newFakeUserRepo()
+	svc := NewService(repo)
+
+	_, err := svc.UpdateStatus(context.Background(), "507f1f77bcf86cd799439011", string(make([]byte, 81)), "")
+	if err != ErrStatusTooLong {
+		t.Fatalf("expected ErrStatusTooLong, got %v", err)
+	}
+}
+
 type fakeUserRepo struct {
 	users          map[string]*User
 	usersByID      map[string]*User
@@ -149,6 +173,16 @@ func (r *fakeUserRepo) RunUnfollowTransaction(_ context.Context, followerID, fol
 		r.followersCount--
 	}
 	return nil
+}
+
+func (r *fakeUserRepo) UpdateStatus(_ context.Context, userID, statusText, statusPreset string) (*User, error) {
+	user, ok := r.usersByID[userID]
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+	user.StatusText = statusText
+	user.StatusPreset = statusPreset
+	return user, nil
 }
 
 var _ Repository = (*fakeUserRepo)(nil)

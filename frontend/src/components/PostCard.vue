@@ -15,7 +15,7 @@ const canLike = computed(() => Boolean(authStore.token))
 const embeddedImages = computed(() => Array.isArray(props.post.embedded_images) ? props.post.embedded_images : [])
 const authorName = computed(() => props.post.author_username ?? `User ${props.post.author_id.slice(0, 6)}`)
 const authorHandle = computed(() => props.post.author_username ? `@${props.post.author_username}` : props.post.author_id.slice(0, 8))
-const likeActionLabel = computed(() => liked.value ? '已赞' : '点赞')
+const topics = computed(() => Array.isArray(props.post.topics) ? props.post.topics : [])
 
 function formatTime(value: string) {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -82,34 +82,39 @@ async function toggleLike() {
               alt="embedded image"
             />
           </div>
+
+          <div v-if="topics.length" class="post-card__topics">
+            <RouterLink v-for="topic in topics" :key="topic" class="post-card__topic" to="/">
+              # {{ topic }}
+            </RouterLink>
+          </div>
         </div>
 
         <footer class="post-card__meta">
           <button
             v-if="canLike"
             class="post-action post-action--button"
+            :class="{ 'post-action--liked': liked }"
             type="button"
             :disabled="isLiking"
+            :aria-label="liked ? '取消点赞' : '点赞'"
             @click="toggleLike"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M20.8 4.6a5.4 5.4 0 0 0-7.6 0L12 5.8l-1.2-1.2a5.4 5.4 0 0 0-7.6 7.6L12 21l8.8-8.8a5.4 5.4 0 0 0 0-7.6z" />
             </svg>
-            <span>{{ likeActionLabel }}</span>
             <span>{{ localLikeCount }}</span>
           </button>
-          <RouterLink v-else class="post-action" to="/login">
+          <RouterLink v-else class="post-action" to="/login" aria-label="登录后点赞">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M20.8 4.6a5.4 5.4 0 0 0-7.6 0L12 5.8l-1.2-1.2a5.4 5.4 0 0 0-7.6 7.6L12 21l8.8-8.8a5.4 5.4 0 0 0 0-7.6z" />
             </svg>
-            <span>点赞</span>
             <span>{{ localLikeCount }}</span>
           </RouterLink>
           <RouterLink class="post-action" :to="`/posts/${post.id}`">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
             </svg>
-            <span>评论</span>
             <span>{{ post.comment_count }}</span>
           </RouterLink>
         </footer>

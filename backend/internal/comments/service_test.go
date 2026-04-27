@@ -11,7 +11,8 @@ import (
 func TestCreateCommentRendersMarkdownAndIncrementsPostCount(t *testing.T) {
 	counter := &fakePostCounter{}
 	repo := NewMemoryRepository(counter)
-	svc := NewService(repo, nil)
+	recorder := &fakeActivityRecorder{}
+	svc := NewService(repo, nil, recorder)
 
 	comment, err := svc.CreateComment(context.Background(), CreateCommentInput{
 		PostID:          "507f1f77bcf86cd799439011",
@@ -26,6 +27,9 @@ func TestCreateCommentRendersMarkdownAndIncrementsPostCount(t *testing.T) {
 	}
 	if counter.deltas["507f1f77bcf86cd799439011"] != 1 {
 		t.Fatalf("expected post comment count increment, got %d", counter.deltas["507f1f77bcf86cd799439011"])
+	}
+	if recorder.comments != 1 {
+		t.Fatalf("expected comment activity record, got %d", recorder.comments)
 	}
 }
 
@@ -109,5 +113,14 @@ func (f *fakePostCounter) AdjustCommentCount(_ context.Context, postID string, d
 		f.deltas = make(map[string]int64)
 	}
 	f.deltas[postID] += delta
+	return nil
+}
+
+type fakeActivityRecorder struct {
+	comments int
+}
+
+func (r *fakeActivityRecorder) RecordComment(_ context.Context, userID, postID, commentID string) error {
+	r.comments++
 	return nil
 }

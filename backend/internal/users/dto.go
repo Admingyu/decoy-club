@@ -6,6 +6,8 @@ type Profile struct {
 	Username          string `json:"username"`
 	AvatarURL         string `json:"avatar_url"`
 	Bio               string `json:"bio"`
+	StatusText        string `json:"status_text"`
+	StatusPreset      string `json:"status_preset"`
 	PostCount         int64  `json:"post_count"`
 	ReplyCount        int64  `json:"reply_count"`
 	FollowersCount    int64  `json:"followers_count"`
@@ -17,4 +19,9 @@ type Profile struct {
 
 type ProfileResponse struct {
 	Profile Profile `json:"profile"`
+}
+
+type UpdateStatusRequest struct {
+	StatusText   string `json:"status_text"`
+	StatusPreset string `json:"status_preset"`
 }

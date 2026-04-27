@@ -27,7 +27,7 @@ func TestNotifyPostLikedCreatesUnreadNotification(t *testing.T) {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 
-	notifications, err := repo.ListNotifications(context.Background(), postAuthor.ID.Hex(), true, 1, 20)
+	notifications, err := repo.ListNotifications(context.Background(), postAuthor.ID.Hex(), true, nil, 1, 20)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -57,7 +57,7 @@ func TestNotifyCommentRepliedIncludesParentContext(t *testing.T) {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 
-	notifications, _ := repo.ListNotifications(context.Background(), parentAuthor.ID.Hex(), true, 1, 20)
+	notifications, _ := repo.ListNotifications(context.Background(), parentAuthor.ID.Hex(), true, nil, 1, 20)
 	if len(notifications) != 1 {
 		t.Fatalf("expected 1 notification, got %d", len(notifications))
 	}

@@ -7,6 +7,7 @@ export type ApiPost = {
   content_markdown: string
   content_html: string
   embedded_images: string[]
+  topics: string[]
   like_count: number
   liked_by_viewer?: boolean
   comment_count: number
@@ -18,6 +19,7 @@ export function normalizePost(post: ApiPost): ApiPost {
   return {
     ...post,
     embedded_images: Array.isArray(post.embedded_images) ? post.embedded_images : [],
+    topics: Array.isArray(post.topics) ? post.topics : [],
   }
 }
 
@@ -61,6 +63,8 @@ export type ApiProfile = {
   username: string
   avatar_url?: string
   bio?: string
+  status_text?: string
+  status_preset?: string
   post_count: number
   reply_count: number
   followers_count: number
@@ -70,6 +74,36 @@ export type ApiProfile = {
   following: boolean
 }
 
+export type ActivityType = 'views' | 'likes' | 'comments'
+
+export type ApiActivityCounts = {
+  views: number
+  likes: number
+  comments: number
+}
+
+export type ApiActivityItem = {
+  id: string
+  type: 'view' | 'like' | 'comment'
+  count: number
+  created_at: string
+  updated_at: string
+  post?: ApiPost
+  comment?: ApiComment
+}
+
+export function normalizeActivityResponse(response: { activities: ApiActivityItem[] | null }) {
+  return {
+    ...response,
+    activities: Array.isArray(response.activities)
+      ? response.activities.map((activity) => ({
+        ...activity,
+        post: activity.post ? normalizePost(activity.post) : undefined,
+      }))
+      : [],
+  }
+}
+
 export type AuthResponse = {
   token: string
   user: ApiUser
@@ -77,13 +111,23 @@ export type AuthResponse = {
 
 export type NotificationListItem = {
   id: string
-  type: 'post_liked' | 'post_commented' | 'comment_replied'
+  type: 'post_liked' | 'post_commented' | 'comment_replied' | 'user_mentioned'
   is_read: boolean
   created_at: string
   actor?: { id: string; username: string }
   post?: { id: string; author_id: string; author_username: string; content_markdown?: string; content_preview: string }
   comment?: { id: string; author_id: string; author_username: string; content_markdown?: string; content_preview: string; created_at: string }
   parent_comment?: { id: string; author_id: string; author_username: string; content_markdown?: string; content_preview: string; created_at: string }
+}
+
+export type NotificationFilter = 'all' | 'likes' | 'comments' | 'mentions'
+
+export type Topic = {
+  id: string
+  name: string
+  post_count: number
+  updated_at: string
+  last_post_at: string
 }
 
 async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
@@ -137,8 +181,8 @@ export function fetchFollowingPosts(token: string) {
   return request<{ posts: ApiPost[] | null }>('/timeline/following', {}, token).then(normalizePostsResponse)
 }
 
-export function fetchPost(postId: string) {
-  return request<{ post: ApiPost }>(`/posts/${postId}`).then(normalizePostResponse)
+export function fetchPost(postId: string, token?: string) {
+  return request<{ post: ApiPost }>(`/posts/${postId}`, {}, token).then(normalizePostResponse)
 }
 
 export function fetchPostComments(postId: string) {
@@ -191,9 +235,20 @@ export function fetchUnreadCount(token: string) {
   return request<{ total: number; by_type: Record<string, number> }>('/notifications/unread-count', {}, token)
 }
 
-export function fetchNotifications(token: string, unreadOnly = false) {
-  const query = unreadOnly ? '?status=unread' : ''
+export function fetchNotifications(token: string, unreadOnly = false, filter: NotificationFilter = 'all') {
+  const params = new URLSearchParams()
+  if (unreadOnly) {
+    params.set('status', 'unread')
+  }
+  if (filter !== 'all') {
+    params.set('type', filter)
+  }
+  const query = params.toString() ? `?${params.toString()}` : ''
   return request<{ notifications: NotificationListItem[] }>(`/notifications${query}`, {}, token)
+}
+
+export function fetchTrendingTopics(limit = 10) {
+  return request<{ topics: Topic[] }>(`/topics/trending?limit=${limit}`)
 }
 
 export function fetchNotificationDetail(token: string, notificationId: string) {
@@ -211,8 +266,30 @@ export function fetchProfile(username: string, token?: string) {
   return request<{ profile: ApiProfile }>(`/users/${encodeURIComponent(username)}/profile`, {}, token)
 }
 
+export function updateMyStatus(token: string, statusText: string, statusPreset: string) {
+  return request<{ profile: ApiProfile }>('/users/me/status', {
+    method: 'PUT',
+    body: JSON.stringify({
+      status_text: statusText,
+      status_preset: statusPreset,
+    }),
+  }, token)
+}
+
 export function fetchUserPosts(username: string, token?: string) {
   return request<{ posts: ApiPost[] | null }>(`/users/${encodeURIComponent(username)}/posts`, {}, token).then(normalizePostsResponse)
+}
+
+export function fetchActivityCounts(username: string, token?: string) {
+  return request<{ counts: ApiActivityCounts }>(`/users/${encodeURIComponent(username)}/activity-counts`, {}, token)
+}
+
+export function fetchUserActivity(token: string, username: string, type: ActivityType) {
+  return request<{ activities: ApiActivityItem[] | null }>(
+    `/users/${encodeURIComponent(username)}/activity?type=${encodeURIComponent(type)}`,
+    {},
+    token,
+  ).then(normalizeActivityResponse)
 }
 
 export function followUser(token: string, username: string) {

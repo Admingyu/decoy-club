@@ -23,6 +23,7 @@ const (
 	TypePostLiked      NotificationType = "post_liked"
 	TypePostCommented  NotificationType = "post_commented"
 	TypeCommentReplied NotificationType = "comment_replied"
+	TypeUserMentioned  NotificationType = "user_mentioned"
 )
 
 type NotificationContext struct {

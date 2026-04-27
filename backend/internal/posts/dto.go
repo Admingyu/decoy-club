@@ -14,6 +14,7 @@ type PostView struct {
 	ContentMarkdown string     `json:"content_markdown"`
 	ContentHTML     string     `json:"content_html"`
 	EmbeddedImages  []string   `json:"embedded_images"`
+	Topics          []string   `json:"topics"`
 	LikeCount       int64      `json:"like_count"`
 	LikedByViewer   bool       `json:"liked_by_viewer"`
 	CommentCount    int64      `json:"comment_count"`
@@ -38,6 +39,18 @@ type FollowingTimelineResponse struct {
 	Posts []*PostView `json:"posts"`
 }
 
+type TopicView struct {
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	PostCount  int64     `json:"post_count"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	LastPostAt time.Time `json:"last_post_at"`
+}
+
+type TrendingTopicsResponse struct {
+	Topics []*TopicView `json:"topics"`
+}
+
 func NewPostView(post *Post) *PostView {
 	return NewPostViewWithAuthorAndLike(post, "", false)
 }
@@ -52,6 +65,7 @@ func NewPostViewWithAuthorAndLike(post *Post, authorUsername string, likedByView
 	}
 
 	embeddedImages := append([]string{}, post.EmbeddedImages...)
+	topics := append([]string{}, post.Topics...)
 
 	return &PostView{
 		ID:              post.ID.Hex(),
@@ -60,6 +74,7 @@ func NewPostViewWithAuthorAndLike(post *Post, authorUsername string, likedByView
 		ContentMarkdown: post.ContentMarkdown,
 		ContentHTML:     post.ContentHTML,
 		EmbeddedImages:  embeddedImages,
+		Topics:          topics,
 		LikeCount:       post.LikeCount,
 		LikedByViewer:   likedByViewer,
 		CommentCount:    post.CommentCount,
@@ -67,6 +82,30 @@ func NewPostViewWithAuthorAndLike(post *Post, authorUsername string, likedByView
 		UpdatedAt:       post.UpdatedAt,
 		DeletedAt:       post.DeletedAt,
 	}
+}
+
+func NewTopicView(topic *Topic) *TopicView {
+	if topic == nil {
+		return nil
+	}
+	return &TopicView{
+		ID:         topic.ID.Hex(),
+		Name:       topic.Name,
+		PostCount:  topic.PostCount,
+		UpdatedAt:  topic.UpdatedAt,
+		LastPostAt: topic.LastPostAt,
+	}
+}
+
+func NewTopicViews(topics []*Topic) []*TopicView {
+	if len(topics) == 0 {
+		return []*TopicView{}
+	}
+	views := make([]*TopicView, 0, len(topics))
+	for _, topic := range topics {
+		views = append(views, NewTopicView(topic))
+	}
+	return views
 }
 
 func NewPostViews(posts []*Post) []*PostView {

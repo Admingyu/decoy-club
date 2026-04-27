@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"decoy-club/backend/internal/activities"
 	"decoy-club/backend/internal/auth"
 	"decoy-club/backend/internal/comments"
 	"decoy-club/backend/internal/common/middleware"
@@ -76,10 +77,19 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 	notificationService := notifications.NewService(notificationRepo, userRepo, postRepo, commentRepo)
 	notificationHandler := notifications.NewHandler(notificationService)
 
-	postService := posts.NewService(postRepo, notificationService)
+	var activityRepo activities.Repository
+	if deps != nil && deps.Database != nil {
+		activityRepo = activities.NewMongoRepository(deps.Database)
+	} else {
+		activityRepo = activities.NewMemoryRepository()
+	}
+	activityService := activities.NewService(activityRepo)
+	activityHandler := activities.NewHandler(activityService, userRepo, postRepo, commentRepo)
+
+	postService := posts.NewService(postRepo, notificationService, activityService)
 	postHandler := posts.NewHandler(postService, userRepo)
 
-	commentService := comments.NewService(commentRepo, notificationService)
+	commentService := comments.NewService(commentRepo, notificationService, activityService)
 	commentHandler := comments.NewHandler(commentService, userRepo)
 
 	var uploadRepo uploads.Repository
@@ -101,14 +111,18 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 	usersGroup := api.Group("/users", optionalViewerID(cfg.JWTSecret))
 	usersGroup.GET("/:username/profile", userHandler.GetProfile)
 	usersGroup.GET("/:username/posts", postHandler.ListPostsByUsername)
+	usersGroup.GET("/:username/activity-counts", activityHandler.GetCounts)
 
 	authedUsers := api.Group("/users", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
+	authedUsers.PUT("/me/status", userHandler.UpdateStatus)
 	authedUsers.POST("/:username/follow", userHandler.Follow)
 	authedUsers.DELETE("/:username/follow", userHandler.Unfollow)
+	authedUsers.GET("/:username/activity", activityHandler.List)
 
 	api.GET("/posts", optionalViewerID(cfg.JWTSecret), postHandler.ListPublicTimeline)
 	api.GET("/posts/:postId", optionalViewerID(cfg.JWTSecret), postHandler.GetPost)
 	api.GET("/posts/:postId/comments", commentHandler.ListPostComments)
+	api.GET("/topics/trending", postHandler.ListTrendingTopics)
 
 	authedPosts := api.Group("/posts", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
 	authedPosts.POST("", postHandler.CreatePost)

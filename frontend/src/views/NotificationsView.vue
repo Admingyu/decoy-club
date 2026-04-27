@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { fetchNotifications, markNotificationsRead, type NotificationListItem } from '../api/client'
+import { fetchNotifications, markNotificationsRead, type NotificationFilter, type NotificationListItem } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
 const authStore = useAuthStore()
 const notifications = ref<NotificationListItem[]>([])
 const isLoading = ref(true)
 const errorMessage = ref('')
+const activeFilter = ref<NotificationFilter>('all')
+const filters: Array<{ key: NotificationFilter; label: string }> = [
+  { key: 'all', label: '全部' },
+  { key: 'likes', label: '点赞' },
+  { key: 'comments', label: '评论' },
+  { key: 'mentions', label: '提及' },
+]
 
 const unreadIds = computed(() => notifications.value.filter((item) => !item.is_read).map((item) => item.id))
 
@@ -17,7 +24,10 @@ function titleFor(item: NotificationListItem) {
   if (item.type === 'post_commented') {
     return `${item.actor?.username ?? 'Someone'} commented on your post`
   }
-  return `${item.actor?.username ?? 'Someone'} replied to your comment`
+  if (item.type === 'comment_replied') {
+    return `${item.actor?.username ?? 'Someone'} replied to your comment`
+  }
+  return `${item.actor?.username ?? 'Someone'} mentioned you`
 }
 
 function formatTime(value: string) {
@@ -39,13 +49,21 @@ async function loadNotifications() {
   isLoading.value = true
   errorMessage.value = ''
   try {
-    const response = await fetchNotifications(authStore.token)
+    const response = await fetchNotifications(authStore.token, false, activeFilter.value)
     notifications.value = response.notifications
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Failed to load notifications'
   } finally {
     isLoading.value = false
   }
+}
+
+async function selectFilter(filter: NotificationFilter) {
+  if (activeFilter.value === filter) {
+    return
+  }
+  activeFilter.value = filter
+  await loadNotifications()
 }
 
 async function markAllRead() {
@@ -71,6 +89,19 @@ onMounted(loadNotifications)
           Mark all read
         </button>
       </header>
+
+      <nav class="feed-tabs" aria-label="Notification filters">
+        <button
+          v-for="filter in filters"
+          :key="filter.key"
+          class="feed-tabs__item feed-tabs__button"
+          :class="{ 'feed-tabs__item--active': activeFilter === filter.key }"
+          type="button"
+          @click="selectFilter(filter.key)"
+        >
+          {{ filter.label }}
+        </button>
+      </nav>
 
       <p v-if="isLoading" class="timeline__state">Loading notifications...</p>
       <p v-else-if="errorMessage" class="timeline__state timeline__state--error">{{ errorMessage }}</p>

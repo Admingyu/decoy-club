@@ -1,7 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { fetchProfile, fetchUserPosts, followUser, unfollowUser, type ApiPost, type ApiProfile } from '../api/client'
+import {
+  fetchActivityCounts,
+  fetchProfile,
+  fetchUserActivity,
+  fetchUserPosts,
+  followUser,
+  unfollowUser,
+  updateMyStatus,
+  type ActivityType,
+  type ApiActivityCounts,
+  type ApiActivityItem,
+  type ApiPost,
+  type ApiProfile,
+} from '../api/client'
 import PostCard from '../components/PostCard.vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -11,11 +24,20 @@ const authStore = useAuthStore()
 const profile = ref<ApiProfile | null>(null)
 const isLoading = ref(true)
 const isUpdatingFollow = ref(false)
+const isSavingStatus = ref(false)
+const isActivityLoading = ref(false)
 const errorMessage = ref('')
 const posts = ref<ApiPost[]>([])
+const activityCounts = ref<ApiActivityCounts>({ views: 0, likes: 0, comments: 0 })
+const activeActivity = ref<ActivityType | null>(null)
+const activities = ref<ApiActivityItem[]>([])
+const statusText = ref('')
+const statusPreset = ref('')
+const statusOptions = ['在线', '忙碌', '开发中', '摸鱼中', '潜水']
 
 const username = computed(() => String(route.params.username ?? authStore.user?.username ?? ''))
 const isOwnProfile = computed(() => username.value !== '' && username.value === String(authStore.user?.username ?? ''))
+const canViewActivity = computed(() => Boolean(authStore.token && isOwnProfile.value))
 
 async function loadProfile() {
   if (!username.value) {
@@ -27,12 +49,18 @@ async function loadProfile() {
   isLoading.value = true
   errorMessage.value = ''
   try {
-    const [profileResponse, postsResponse] = await Promise.all([
+    const [profileResponse, postsResponse, countsResponse] = await Promise.all([
       fetchProfile(username.value, authStore.token || undefined),
       fetchUserPosts(username.value, authStore.token || undefined),
+      fetchActivityCounts(username.value, authStore.token || undefined),
     ])
     profile.value = profileResponse.profile
     posts.value = postsResponse.posts
+    activityCounts.value = countsResponse.counts
+    statusText.value = profileResponse.profile.status_text || ''
+    statusPreset.value = profileResponse.profile.status_preset || ''
+    activeActivity.value = null
+    activities.value = []
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Failed to load profile'
   } finally {
@@ -59,11 +87,67 @@ async function toggleFollow() {
   }
 }
 
+function chooseStatus(option: string) {
+  statusPreset.value = option
+  statusText.value = option
+}
+
+async function saveStatus() {
+  if (!authStore.token || !isOwnProfile.value) {
+    return
+  }
+
+  isSavingStatus.value = true
+  errorMessage.value = ''
+  try {
+    const response = await updateMyStatus(authStore.token, statusText.value, statusPreset.value)
+    profile.value = response.profile
+    statusText.value = response.profile.status_text || ''
+    statusPreset.value = response.profile.status_preset || ''
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Failed to update status'
+  } finally {
+    isSavingStatus.value = false
+  }
+}
+
+async function loadActivity(type: ActivityType) {
+  if (!authStore.token || !canViewActivity.value) {
+    return
+  }
+
+  activeActivity.value = type
+  isActivityLoading.value = true
+  errorMessage.value = ''
+  try {
+    const response = await fetchUserActivity(authStore.token, username.value, type)
+    activities.value = response.activities
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Failed to load activity'
+  } finally {
+    isActivityLoading.value = false
+  }
+}
+
+function activityTitle(type: ActivityType | null) {
+  if (type === 'views') return '浏览记录'
+  if (type === 'likes') return '点赞记录'
+  if (type === 'comments') return '评论记录'
+  return '记录'
+}
+
+function formatActivityTime(value: string) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value))
+}
+
 watch(() => route.params.username, () => {
   void loadProfile()
 }, { immediate: true })
-
-onMounted(loadProfile)
 </script>
 
 <template>
@@ -80,6 +164,9 @@ onMounted(loadProfile)
               <p class="timeline__eyebrow">Profile</p>
               <h2>@{{ profile.username }}</h2>
               <p>{{ profile.bio || 'No bio yet.' }}</p>
+              <p v-if="profile.status_text" class="profile-status">
+                {{ profile.status_text }}
+              </p>
             </div>
           </div>
 
@@ -93,14 +180,74 @@ onMounted(loadProfile)
           </button>
         </header>
 
+        <section v-if="isOwnProfile" class="status-editor">
+          <div class="status-editor__options">
+            <button
+              v-for="option in statusOptions"
+              :key="option"
+              class="ghost-button status-editor__option"
+              :class="{ 'status-editor__option--active': statusPreset === option }"
+              type="button"
+              @click="chooseStatus(option)"
+            >
+              {{ option }}
+            </button>
+          </div>
+          <div class="status-editor__row">
+            <input
+              v-model="statusText"
+              class="status-editor__input"
+              maxlength="80"
+              placeholder="设置你的状态"
+              @input="statusPreset = ''"
+            />
+            <button class="solid-button" :disabled="isSavingStatus" @click="saveStatus">
+              {{ isSavingStatus ? 'Saving...' : 'Save' }}
+            </button>
+          </div>
+        </section>
+
         <div class="profile-grid">
           <div class="sidebar__panel"><h2>Posts</h2><p>{{ profile.post_count }}</p></div>
           <div class="sidebar__panel"><h2>Replies</h2><p>{{ profile.reply_count }}</p></div>
           <div class="sidebar__panel"><h2>Followers</h2><p>{{ profile.followers_count }}</p></div>
           <div class="sidebar__panel"><h2>Following</h2><p>{{ profile.following_count }}</p></div>
+          <button class="sidebar__panel profile-stat" type="button" :disabled="!canViewActivity" @click="loadActivity('views')">
+            <h2>Views</h2><p>{{ activityCounts.views }}</p>
+          </button>
+          <button class="sidebar__panel profile-stat" type="button" :disabled="!canViewActivity" @click="loadActivity('likes')">
+            <h2>Likes</h2><p>{{ activityCounts.likes }}</p>
+          </button>
+          <button class="sidebar__panel profile-stat" type="button" :disabled="!canViewActivity" @click="loadActivity('comments')">
+            <h2>Comments</h2><p>{{ activityCounts.comments }}</p>
+          </button>
           <div class="sidebar__panel"><h2>Received likes</h2><p>{{ profile.received_like_count }}</p></div>
-          <div class="sidebar__panel"><h2>Given likes</h2><p>{{ profile.given_like_count }}</p></div>
         </div>
+
+        <section v-if="activeActivity" class="timeline profile-activity">
+          <header class="timeline__header">
+            <div>
+              <p class="timeline__eyebrow">Activity</p>
+              <h2>{{ activityTitle(activeActivity) }}</h2>
+            </div>
+          </header>
+
+          <p v-if="isActivityLoading" class="timeline__state">Loading records...</p>
+          <p v-else-if="activities.length === 0" class="timeline__state">No records yet.</p>
+          <div v-else class="timeline__list">
+            <article v-for="activity in activities" :key="activity.id" class="activity-card">
+              <div class="activity-card__meta">
+                <span>{{ formatActivityTime(activity.updated_at) }}</span>
+                <span v-if="activity.type === 'view' && activity.count > 1">x{{ activity.count }}</span>
+              </div>
+              <PostCard v-if="activity.post" :post="activity.post" />
+              <div v-if="activity.comment" class="activity-card__comment">
+                <p class="timeline__eyebrow">Comment</p>
+                <div v-html="activity.comment.content_html" />
+              </div>
+            </article>
+          </div>
+        </section>
 
         <section class="timeline profile-posts">
           <header class="timeline__header">

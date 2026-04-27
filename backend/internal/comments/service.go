@@ -4,17 +4,24 @@ import (
 	"context"
 	"time"
 
+	"decoy-club/backend/internal/common/textparse"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 type Service struct {
-	repo     Repository
-	notifier Notifier
+	repo             Repository
+	notifier         Notifier
+	activityRecorder ActivityRecorder
 }
 
 type Notifier interface {
 	NotifyPostCommented(ctx context.Context, commentID string) error
 	NotifyCommentReplied(ctx context.Context, commentID string) error
+	NotifyCommentMentioned(ctx context.Context, commentID string, mentionedUsernames []string) error
+}
+
+type ActivityRecorder interface {
+	RecordComment(ctx context.Context, userID, postID, commentID string) error
 }
 
 type CreateCommentInput struct {
@@ -25,8 +32,12 @@ type CreateCommentInput struct {
 	ReplyToUserID   string
 }
 
-func NewService(repo Repository, notifier Notifier) *Service {
-	return &Service{repo: repo, notifier: notifier}
+func NewService(repo Repository, notifier Notifier, recorders ...ActivityRecorder) *Service {
+	var recorder ActivityRecorder
+	if len(recorders) > 0 {
+		recorder = recorders[0]
+	}
+	return &Service{repo: repo, notifier: notifier, activityRecorder: recorder}
 }
 
 func (s *Service) CreateComment(ctx context.Context, input CreateCommentInput) (*Comment, error) {
@@ -69,7 +80,16 @@ func (s *Service) CreateComment(ctx context.Context, input CreateCommentInput) (
 		return nil, err
 	}
 
+	if s.activityRecorder != nil {
+		if err := s.activityRecorder.RecordComment(ctx, input.AuthorID, created.PostID.Hex(), created.ID.Hex()); err != nil {
+			return nil, err
+		}
+	}
+
 	if s.notifier != nil {
+		if err := s.notifier.NotifyCommentMentioned(ctx, created.ID.Hex(), textparse.ExtractMentions(input.ContentMarkdown)); err != nil {
+			return nil, err
+		}
 		if created.ParentCommentID != nil {
 			if err := s.notifier.NotifyCommentReplied(ctx, created.ID.Hex()); err != nil {
 				return nil, err

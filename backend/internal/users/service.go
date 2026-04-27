@@ -3,9 +3,17 @@ package users
 import (
 	"context"
 	"errors"
+	"strings"
+	"unicode/utf8"
 )
 
 var ErrCannotFollowSelf = errors.New("cannot follow self")
+var ErrStatusTooLong = errors.New("status text is too long")
+
+const (
+	MaxStatusTextLength   = 80
+	MaxStatusPresetLength = 32
+)
 
 type Service struct {
 	repo Repository
@@ -41,6 +49,8 @@ func (s *Service) profileFromUser(ctx context.Context, user *User, viewerID stri
 		Username:          user.Username,
 		AvatarURL:         user.AvatarURL,
 		Bio:               user.Bio,
+		StatusText:        user.StatusText,
+		StatusPreset:      user.StatusPreset,
 		PostCount:         user.PostCount,
 		ReplyCount:        user.ReplyCount,
 		FollowersCount:    user.FollowersCount,
@@ -74,4 +84,19 @@ func (s *Service) Unfollow(ctx context.Context, followerID, followeeID string) e
 	}
 
 	return s.repo.RunUnfollowTransaction(ctx, followerID, followeeID)
+}
+
+func (s *Service) UpdateStatus(ctx context.Context, userID, statusText, statusPreset string) (*Profile, error) {
+	statusText = strings.TrimSpace(statusText)
+	statusPreset = strings.TrimSpace(statusPreset)
+	if utf8.RuneCountInString(statusText) > MaxStatusTextLength || utf8.RuneCountInString(statusPreset) > MaxStatusPresetLength {
+		return nil, ErrStatusTooLong
+	}
+
+	user, err := s.repo.UpdateStatus(ctx, userID, statusText, statusPreset)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.profileFromUser(ctx, user, userID)
 }

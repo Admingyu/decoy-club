@@ -61,14 +61,6 @@ async function submitPost() {
 
 <template>
   <section class="composer">
-    <header class="composer__header">
-      <div>
-        <h2>Start a thread</h2>
-        <p>Write in Markdown and drop backend-hosted images straight into the post body.</p>
-      </div>
-      <span class="composer__badge">Markdown + Images</span>
-    </header>
-
     <textarea
       v-model="content"
       class="composer__textarea"
@@ -77,12 +69,25 @@ async function submitPost() {
     />
 
     <div class="composer__actions">
-      <label class="composer__upload">
+      <label class="composer__upload" aria-label="Upload image" title="Upload image">
         <input type="file" accept="image/*" @change="onUploadChange" />
-        <span>Upload image</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <circle cx="8.5" cy="10" r="1.5" />
+          <path d="m21 15-4.5-4.5L9 18" />
+        </svg>
       </label>
-      <button class="composer__submit" :disabled="!canSubmit" @click="submitPost">
-        {{ isSubmitting ? 'Publishing...' : 'Publish post' }}
+      <button
+        class="composer__submit"
+        :disabled="!canSubmit"
+        :aria-label="isSubmitting ? 'Publishing post' : 'Publish post'"
+        :title="isSubmitting ? 'Publishing post' : 'Publish post'"
+        @click="submitPost"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M22 2 11 13" />
+          <path d="m22 2-7 20-4-9-9-4 20-7z" />
+        </svg>
       </button>
     </div>
 

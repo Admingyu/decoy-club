@@ -41,7 +41,8 @@ func TestCreatePostRejectsInvalidAuthorID(t *testing.T) {
 
 func TestLikePostIsIdempotent(t *testing.T) {
 	repo := newFakePostRepo()
-	svc := NewService(repo, nil)
+	recorder := &fakeActivityRecorder{}
+	svc := NewService(repo, nil, recorder)
 
 	if err := svc.LikePost(context.Background(), "post-1", "user-1"); err != nil {
 		t.Fatalf("first like failed: %v", err)
@@ -51,6 +52,9 @@ func TestLikePostIsIdempotent(t *testing.T) {
 	}
 	if repo.likeCountDelta != 1 {
 		t.Fatalf("expected one increment, got %d", repo.likeCountDelta)
+	}
+	if recorder.likes != 1 {
+		t.Fatalf("expected one like activity record, got %d", recorder.likes)
 	}
 }
 
@@ -177,6 +181,11 @@ func (r *fakePostRepo) ListPublicTimeline(_ context.Context, limit int, before *
 	r.lastPublicBefore = before
 	r.lastPublicBeforeID = beforeID
 	return nil, nil
+}
+
+func (r *fakePostRepo) ListTrendingTopics(_ context.Context, limit int) ([]*Topic, error) {
+	_ = limit
+	return []*Topic{}, nil
 }
 
 func (r *fakePostRepo) SoftDeletePost(_ context.Context, postID, authorID string) error {
@@ -364,6 +373,27 @@ func (r *fakePostRepo) ListLikedPostIDs(_ context.Context, userID string, postID
 }
 
 var _ Repository = (*fakePostRepo)(nil)
+
+type fakeActivityRecorder struct {
+	views    int
+	likes    int
+	comments int
+}
+
+func (r *fakeActivityRecorder) RecordPostView(_ context.Context, userID, postID string) error {
+	r.views++
+	return nil
+}
+
+func (r *fakeActivityRecorder) RecordPostLike(_ context.Context, userID, postID string) error {
+	r.likes++
+	return nil
+}
+
+func (r *fakeActivityRecorder) RecordComment(_ context.Context, userID, postID, commentID string) error {
+	r.comments++
+	return nil
+}
 
 func mustObjectID(hex string) bson.ObjectID {
 	id, err := bson.ObjectIDFromHex(hex)

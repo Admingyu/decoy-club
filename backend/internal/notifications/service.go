@@ -137,12 +137,105 @@ func (s *Service) NotifyCommentReplied(ctx context.Context, commentID string) er
 	})
 }
 
+func (s *Service) NotifyPostMentioned(ctx context.Context, postID, actorUserID string, mentionedUsernames []string) error {
+	if len(mentionedUsernames) == 0 {
+		return nil
+	}
+	post, err := s.postsRepo.FindPostByID(ctx, postID)
+	if err != nil {
+		return err
+	}
+	actor, err := s.usersRepo.FindByID(ctx, actorUserID)
+	if err != nil {
+		return err
+	}
+	postAuthor, err := s.usersRepo.FindByID(ctx, post.AuthorID.Hex())
+	if err != nil {
+		return err
+	}
+	for _, username := range mentionedUsernames {
+		recipient, err := s.usersRepo.FindByUsername(ctx, username)
+		if err != nil {
+			if err == users.ErrUserNotFound {
+				continue
+			}
+			return err
+		}
+		if recipient.ID == actor.ID {
+			continue
+		}
+		if err := s.createNotification(ctx, &Notification{
+			RecipientUserID: recipient.ID,
+			ActorUserID:     actor.ID,
+			Type:            TypeUserMentioned,
+			IsRead:          false,
+			Context: NotificationContext{
+				Post:          buildPostSnapshot(post, postAuthor),
+				Actor:         buildActorSnapshot(actor),
+				SnapshotFlags: NotificationSnapshotFlags{PostDeleted: post.IsDeleted},
+			},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) NotifyCommentMentioned(ctx context.Context, commentID string, mentionedUsernames []string) error {
+	if len(mentionedUsernames) == 0 {
+		return nil
+	}
+	comment, err := s.commentsRepo.FindCommentByID(ctx, commentID)
+	if err != nil {
+		return err
+	}
+	post, err := s.postsRepo.FindPostByID(ctx, comment.PostID.Hex())
+	if err != nil {
+		return err
+	}
+	actor, err := s.usersRepo.FindByID(ctx, comment.AuthorID.Hex())
+	if err != nil {
+		return err
+	}
+	postAuthor, err := s.usersRepo.FindByID(ctx, post.AuthorID.Hex())
+	if err != nil {
+		return err
+	}
+	for _, username := range mentionedUsernames {
+		recipient, err := s.usersRepo.FindByUsername(ctx, username)
+		if err != nil {
+			if err == users.ErrUserNotFound {
+				continue
+			}
+			return err
+		}
+		if recipient.ID == actor.ID {
+			continue
+		}
+		if err := s.createNotification(ctx, &Notification{
+			RecipientUserID: recipient.ID,
+			ActorUserID:     actor.ID,
+			Type:            TypeUserMentioned,
+			IsRead:          false,
+			Context: NotificationContext{
+				Post:          buildPostSnapshot(post, postAuthor),
+				Comment:       buildCommentSnapshot(comment, actor),
+				Actor:         buildActorSnapshot(actor),
+				SnapshotFlags: NotificationSnapshotFlags{PostDeleted: post.IsDeleted, CommentDeleted: comment.IsDeleted},
+			},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) GetUnreadCount(ctx context.Context, viewerID string) (map[NotificationType]int64, int64, error) {
 	return s.repo.CountUnread(ctx, viewerID)
 }
 
-func (s *Service) ListNotifications(ctx context.Context, viewerID string, unreadOnly bool, page, pageSize int) ([]*Notification, error) {
-	return s.repo.ListNotifications(ctx, viewerID, unreadOnly, page, pageSize)
+func (s *Service) ListNotifications(ctx context.Context, viewerID string, unreadOnly bool, types []NotificationType, page, pageSize int) ([]*Notification, error) {
+	return s.repo.ListNotifications(ctx, viewerID, unreadOnly, types, page, pageSize)
 }
 
 func (s *Service) GetNotification(ctx context.Context, viewerID, notificationID string) (*Notification, error) {

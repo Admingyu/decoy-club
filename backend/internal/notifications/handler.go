@@ -57,13 +57,27 @@ func (h *Handler) ListNotifications(c *gin.Context) {
 		}
 	}
 	unreadOnly := c.Query("status") == "unread"
+	types := notificationTypesForFilter(c.Query("type"))
 
-	notifications, err := h.svc.ListNotifications(c.Request.Context(), viewerID, unreadOnly, page, pageSize)
+	notifications, err := h.svc.ListNotifications(c.Request.Context(), viewerID, unreadOnly, types, page, pageSize)
 	if err != nil {
 		response.JSON(c, http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	response.JSON(c, http.StatusOK, NotificationListResponse{Notifications: newNotificationListItems(notifications, false)})
+}
+
+func notificationTypesForFilter(filter string) []NotificationType {
+	switch filter {
+	case "likes":
+		return []NotificationType{TypePostLiked}
+	case "comments":
+		return []NotificationType{TypePostCommented, TypeCommentReplied}
+	case "mentions":
+		return []NotificationType{TypeUserMentioned}
+	default:
+		return nil
+	}
 }
 
 func (h *Handler) GetNotification(c *gin.Context) {

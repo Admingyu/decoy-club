@@ -20,6 +20,7 @@ type Repository interface {
 	ListFollowingIDs(ctx context.Context, followerID string) ([]string, error)
 	RunFollowTransaction(ctx context.Context, followerID, followeeID string) error
 	RunUnfollowTransaction(ctx context.Context, followerID, followeeID string) error
+	UpdateStatus(ctx context.Context, userID, statusText, statusPreset string) (*User, error)
 }
 
 type MongoRepository struct {
@@ -227,6 +228,33 @@ func (r *MongoRepository) RunUnfollowTransaction(ctx context.Context, followerID
 	return nil
 }
 
+func (r *MongoRepository) UpdateStatus(ctx context.Context, userID, statusText, statusPreset string) (*User, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return nil, err
+	}
+
+	userObjectID, err := bson.ObjectIDFromHex(userID)
+	if err != nil {
+		return nil, ErrUserNotFound
+	}
+
+	result, err := r.usersCollection().UpdateOne(ctx, bson.M{"_id": userObjectID}, bson.M{
+		"$set": bson.M{
+			"status_text":   statusText,
+			"status_preset": statusPreset,
+			"updated_at":    time.Now().UTC(),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.MatchedCount == 0 {
+		return nil, ErrUserNotFound
+	}
+
+	return r.FindByID(ctx, userID)
+}
+
 func (r *MongoRepository) adjustFollowCounters(ctx context.Context, followerObjectID, followeeObjectID bson.ObjectID, delta int64, now time.Time) error {
 	if _, err := r.usersCollection().UpdateByID(ctx, followerObjectID, bson.M{
 		"$inc": bson.M{"following_count": delta},
@@ -417,6 +445,20 @@ func (r *MemoryRepository) RunUnfollowTransaction(_ context.Context, followerID,
 		followee.FollowersCount--
 	}
 	return nil
+}
+
+func (r *MemoryRepository) UpdateStatus(_ context.Context, userID, statusText, statusPreset string) (*User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	user, ok := r.usersByID[userID]
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+	user.StatusText = statusText
+	user.StatusPreset = statusPreset
+	user.UpdatedAt = time.Now().UTC()
+	return user, nil
 }
 
 func (r *MemoryRepository) ensureUserByID(id string) *User {

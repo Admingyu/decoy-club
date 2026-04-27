@@ -6,6 +6,18 @@ import { useAuthStore } from './stores/auth'
 const authStore = useAuthStore()
 const usernameLabel = computed(() => String(authStore.user?.username ?? 'operator'))
 const unreadCount = ref(0)
+const theme = ref<'light' | 'dark'>('light')
+const isDarkMode = computed(() => theme.value === 'dark')
+
+function applyTheme(nextTheme: 'light' | 'dark') {
+  theme.value = nextTheme
+  document.documentElement.dataset.theme = nextTheme
+  window.localStorage.setItem('decoy-theme', nextTheme)
+}
+
+function toggleTheme() {
+  applyTheme(isDarkMode.value ? 'light' : 'dark')
+}
 
 async function refreshUnreadCount() {
   if (!authStore.token) {
@@ -29,6 +41,9 @@ watch(
 )
 
 onMounted(() => {
+  const storedTheme = window.localStorage.getItem('decoy-theme')
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+  applyTheme(storedTheme === 'dark' || storedTheme === 'light' ? storedTheme : prefersDark ? 'dark' : 'light')
   void refreshUnreadCount()
 })
 </script>
@@ -37,8 +52,14 @@ onMounted(() => {
   <div class="app-frame">
     <aside class="app-sidebar">
       <RouterLink class="app-sidebar__brand" to="/">
-        <span class="app-sidebar__mark" aria-hidden="true">D</span>
-        <span>Decoy Club</span>
+        <svg class="app-sidebar__logo" viewBox="0 0 168 34" role="img" aria-label="Decoy Club">
+          <path class="app-sidebar__logo-mark" d="M17 4 29 11v14l-12 7-12-7V11L17 4z" />
+          <path class="app-sidebar__logo-line" d="M17 9v18" />
+          <path class="app-sidebar__logo-line" d="M9.5 13.5 17 18l7.5-4.5" />
+          <circle class="app-sidebar__logo-dot" cx="17" cy="18" r="3.4" />
+          <text x="42" y="17" class="app-sidebar__logo-main">DECOY</text>
+          <text x="42" y="29" class="app-sidebar__logo-sub">CLUB</text>
+        </svg>
       </RouterLink>
 
       <nav class="app-sidebar__nav" aria-label="Primary">
@@ -103,6 +124,34 @@ onMounted(() => {
           </RouterLink>
         </template>
       </nav>
+
+      <button
+        class="app-sidebar__theme"
+        :class="{ 'app-sidebar__theme--dark': isDarkMode }"
+        type="button"
+        role="switch"
+        :aria-checked="isDarkMode"
+        :aria-label="isDarkMode ? '切换到浅色模式' : '切换到暗色模式'"
+        @click="toggleTheme"
+      >
+        <svg v-if="isDarkMode" class="app-sidebar__theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2" />
+          <path d="M12 20v2" />
+          <path d="m4.93 4.93 1.41 1.41" />
+          <path d="m17.66 17.66 1.41 1.41" />
+          <path d="M2 12h2" />
+          <path d="M20 12h2" />
+          <path d="m6.34 17.66-1.41 1.41" />
+          <path d="m19.07 4.93-1.41 1.41" />
+        </svg>
+        <svg v-else class="app-sidebar__theme-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M21 12.8A8.6 8.6 0 1 1 11.2 3 6.8 6.8 0 0 0 21 12.8z" />
+        </svg>
+        <span class="app-sidebar__theme-track" aria-hidden="true">
+          <span class="app-sidebar__theme-thumb" />
+        </span>
+      </button>
 
       <div v-if="authStore.token" class="app-sidebar__account">
         <span class="app-sidebar__user">{{ usernameLabel }}</span>

@@ -38,7 +38,7 @@ async function loadPostDetail() {
   errorMessage.value = ''
   try {
     const [postResponse, commentsResponse] = await Promise.all([
-      fetchPost(postId.value),
+      fetchPost(postId.value, authStore.token || undefined),
       fetchPostComments(postId.value),
     ])
     post.value = postResponse.post
@@ -127,16 +127,42 @@ onMounted(loadPostDetail)
             <img v-for="image in post.embedded_images" :key="image" class="post-card__image" :src="image" alt="embedded image" />
           </div>
 
+          <div v-if="post.topics.length" class="post-card__topics">
+            <RouterLink v-for="topic in post.topics" :key="topic" class="post-card__topic" to="/">
+              # {{ topic }}
+            </RouterLink>
+          </div>
+
           <footer class="post-card__meta">
-            <button v-if="isLoggedIn" class="post-card__like-button" :disabled="isLikeSubmitting" @click="toggleLike">
-              {{ liked ? 'Unlike' : 'Like' }}
+            <button
+              v-if="isLoggedIn"
+              class="post-action post-action--button"
+              :class="{ 'post-action--liked': liked }"
+              :disabled="isLikeSubmitting"
+              :aria-label="liked ? '取消点赞' : '点赞'"
+              @click="toggleLike"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20.8 4.6a5.4 5.4 0 0 0-7.6 0L12 5.8l-1.2-1.2a5.4 5.4 0 0 0-7.6 7.6L12 21l8.8-8.8a5.4 5.4 0 0 0 0-7.6z" />
+              </svg>
+              <span>{{ post.like_count }}</span>
             </button>
-            <span>{{ post.like_count }} likes</span>
-            <span>{{ post.comment_count }} comments</span>
+            <RouterLink v-else class="post-action" to="/login" aria-label="登录后点赞">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20.8 4.6a5.4 5.4 0 0 0-7.6 0L12 5.8l-1.2-1.2a5.4 5.4 0 0 0-7.6 7.6L12 21l8.8-8.8a5.4 5.4 0 0 0 0-7.6z" />
+              </svg>
+              <span>{{ post.like_count }}</span>
+            </RouterLink>
+            <a class="post-action" href="#comments">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+              </svg>
+              <span>{{ post.comment_count }}</span>
+            </a>
           </footer>
         </article>
 
-        <section class="timeline">
+        <section id="comments" class="timeline">
           <header class="timeline__header">
             <div>
               <p class="timeline__eyebrow">Discussion</p>
