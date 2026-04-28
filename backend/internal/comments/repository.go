@@ -25,6 +25,10 @@ type Repository interface {
 	CreateComment(ctx context.Context, comment *Comment) (*Comment, error)
 	FindCommentByID(ctx context.Context, id string) (*Comment, error)
 	ListCommentsByPostID(ctx context.Context, postID string) ([]*Comment, error)
+	HasLike(ctx context.Context, commentID, userID string) (bool, error)
+	ListLikedCommentIDs(ctx context.Context, userID string, commentIDs []string) (map[string]bool, error)
+	LikeComment(ctx context.Context, commentID, userID string) (bool, error)
+	UnlikeComment(ctx context.Context, commentID, userID string) (bool, error)
 	SoftDeleteComment(ctx context.Context, commentID, authorID string) error
 }
 
@@ -35,12 +39,23 @@ type MongoRepository struct {
 	indexesReady bool
 }
 
+type commentLikeEdge struct {
+	ID        bson.ObjectID `bson:"_id,omitempty"`
+	CommentID bson.ObjectID `bson:"comment_id"`
+	UserID    bson.ObjectID `bson:"user_id"`
+	CreatedAt time.Time     `bson:"created_at"`
+}
+
 func NewMongoRepository(db *mongo.Database, postCounter PostCounter) *MongoRepository {
 	return &MongoRepository{db: db, postCounter: postCounter}
 }
 
 func (r *MongoRepository) commentsCollection() *mongo.Collection {
 	return r.db.Collection("comments")
+}
+
+func (r *MongoRepository) commentLikesCollection() *mongo.Collection {
+	return r.db.Collection("comment_likes")
 }
 
 func (r *MongoRepository) CreateComment(ctx context.Context, comment *Comment) (*Comment, error) {
@@ -134,6 +149,173 @@ func (r *MongoRepository) ListCommentsByPostID(ctx context.Context, postID strin
 	return comments, nil
 }
 
+func (r *MongoRepository) HasLike(ctx context.Context, commentID, userID string) (bool, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return false, err
+	}
+	commentObjectID, err := bson.ObjectIDFromHex(commentID)
+	if err != nil {
+		return false, nil
+	}
+	userObjectID, err := bson.ObjectIDFromHex(userID)
+	if err != nil {
+		return false, nil
+	}
+
+	err = r.commentLikesCollection().FindOne(ctx, bson.M{"comment_id": commentObjectID, "user_id": userObjectID}).Err()
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return false, nil
+	}
+	return false, err
+}
+
+func (r *MongoRepository) ListLikedCommentIDs(ctx context.Context, userID string, commentIDs []string) (map[string]bool, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return nil, err
+	}
+	if len(commentIDs) == 0 {
+		return map[string]bool{}, nil
+	}
+	userObjectID, err := bson.ObjectIDFromHex(userID)
+	if err != nil {
+		return map[string]bool{}, nil
+	}
+	commentObjectIDs := make([]bson.ObjectID, 0, len(commentIDs))
+	for _, commentID := range commentIDs {
+		objectID, err := bson.ObjectIDFromHex(commentID)
+		if err != nil {
+			continue
+		}
+		commentObjectIDs = append(commentObjectIDs, objectID)
+	}
+	if len(commentObjectIDs) == 0 {
+		return map[string]bool{}, nil
+	}
+
+	cursor, err := r.commentLikesCollection().Find(ctx, bson.M{
+		"user_id":    userObjectID,
+		"comment_id": bson.M{"$in": commentObjectIDs},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	result := make(map[string]bool)
+	for cursor.Next(ctx) {
+		var edge commentLikeEdge
+		if err := cursor.Decode(&edge); err != nil {
+			return nil, err
+		}
+		result[edge.CommentID.Hex()] = true
+	}
+	return result, cursor.Err()
+}
+
+func (r *MongoRepository) LikeComment(ctx context.Context, commentID, userID string) (bool, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return false, err
+	}
+	commentObjectID, err := bson.ObjectIDFromHex(commentID)
+	if err != nil {
+		return false, ErrCommentNotFound
+	}
+	userObjectID, err := bson.ObjectIDFromHex(userID)
+	if err != nil {
+		return false, ErrCommentNotFound
+	}
+
+	if err := r.commentsCollection().FindOne(ctx, bson.M{"_id": commentObjectID, "is_deleted": false}).Err(); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return false, ErrCommentNotFound
+		}
+		return false, err
+	}
+
+	_, err = r.commentLikesCollection().InsertOne(ctx, commentLikeEdge{
+		ID:        bson.NewObjectID(),
+		CommentID: commentObjectID,
+		UserID:    userObjectID,
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	now := time.Now().UTC()
+	result, err := r.commentsCollection().UpdateOne(ctx, bson.M{
+		"_id":        commentObjectID,
+		"is_deleted": false,
+	}, bson.M{
+		"$inc": bson.M{"like_count": 1},
+		"$set": bson.M{"updated_at": now},
+	})
+	if err != nil || result.MatchedCount == 0 {
+		_, _ = r.commentLikesCollection().DeleteOne(ctx, bson.M{"comment_id": commentObjectID, "user_id": userObjectID})
+		if err != nil {
+			return false, err
+		}
+		return false, ErrCommentNotFound
+	}
+
+	return true, nil
+}
+
+func (r *MongoRepository) UnlikeComment(ctx context.Context, commentID, userID string) (bool, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return false, err
+	}
+	commentObjectID, err := bson.ObjectIDFromHex(commentID)
+	if err != nil {
+		return false, ErrCommentNotFound
+	}
+	userObjectID, err := bson.ObjectIDFromHex(userID)
+	if err != nil {
+		return false, ErrCommentNotFound
+	}
+
+	filter := bson.M{"comment_id": commentObjectID, "user_id": userObjectID}
+	var removed commentLikeEdge
+	if err := r.commentLikesCollection().FindOne(ctx, filter).Decode(&removed); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	result, err := r.commentLikesCollection().DeleteOne(ctx, filter)
+	if err != nil {
+		return false, err
+	}
+	if result.DeletedCount == 0 {
+		return false, nil
+	}
+
+	now := time.Now().UTC()
+	updateResult, err := r.commentsCollection().UpdateOne(ctx, bson.M{
+		"_id":        commentObjectID,
+		"is_deleted": false,
+	}, bson.M{
+		"$inc": bson.M{"like_count": -1},
+		"$set": bson.M{"updated_at": now},
+	})
+	if err != nil || updateResult.MatchedCount == 0 {
+		_, _ = r.commentLikesCollection().InsertOne(ctx, removed)
+		if err != nil {
+			return false, err
+		}
+		return false, ErrCommentNotFound
+	}
+
+	return true, nil
+}
+
 func (r *MongoRepository) SoftDeleteComment(ctx context.Context, commentID, authorID string) error {
 	if err := r.ensureIndexes(ctx); err != nil {
 		return err
@@ -210,6 +392,15 @@ func (r *MongoRepository) ensureIndexes(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	if _, err := r.commentLikesCollection().Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "comment_id", Value: 1},
+			{Key: "user_id", Value: 1},
+		},
+		Options: options.Index().SetUnique(true),
+	}); err != nil {
+		return err
+	}
 
 	r.indexesReady = true
 	return nil
@@ -218,12 +409,14 @@ func (r *MongoRepository) ensureIndexes(ctx context.Context) error {
 type MemoryRepository struct {
 	mu          sync.RWMutex
 	comments    map[string]*Comment
+	likes       map[string]map[string]struct{}
 	postCounter PostCounter
 }
 
 func NewMemoryRepository(postCounter PostCounter) *MemoryRepository {
 	return &MemoryRepository{
 		comments:    make(map[string]*Comment),
+		likes:       make(map[string]map[string]struct{}),
 		postCounter: postCounter,
 	}
 }
@@ -303,6 +496,79 @@ func (r *MemoryRepository) ListCommentsByPostID(_ context.Context, postID string
 	})
 
 	return result, nil
+}
+
+func (r *MemoryRepository) HasLike(_ context.Context, commentID, userID string) (bool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	likesByComment, ok := r.likes[commentID]
+	if !ok {
+		return false, nil
+	}
+	_, exists := likesByComment[userID]
+	return exists, nil
+}
+
+func (r *MemoryRepository) ListLikedCommentIDs(_ context.Context, userID string, commentIDs []string) (map[string]bool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make(map[string]bool)
+	for _, commentID := range commentIDs {
+		if likesByComment, ok := r.likes[commentID]; ok {
+			if _, exists := likesByComment[userID]; exists {
+				result[commentID] = true
+			}
+		}
+	}
+	return result, nil
+}
+
+func (r *MemoryRepository) LikeComment(_ context.Context, commentID, userID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	comment, ok := r.comments[commentID]
+	if !ok || comment.IsDeleted {
+		return false, ErrCommentNotFound
+	}
+	if _, ok := r.likes[commentID]; !ok {
+		r.likes[commentID] = make(map[string]struct{})
+	}
+	if _, exists := r.likes[commentID][userID]; exists {
+		return false, nil
+	}
+
+	r.likes[commentID][userID] = struct{}{}
+	comment.LikeCount++
+	comment.UpdatedAt = time.Now().UTC()
+	return true, nil
+}
+
+func (r *MemoryRepository) UnlikeComment(_ context.Context, commentID, userID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	comment, ok := r.comments[commentID]
+	if !ok || comment.IsDeleted {
+		return false, ErrCommentNotFound
+	}
+	likesByComment, ok := r.likes[commentID]
+	if !ok {
+		return false, nil
+	}
+	if _, exists := likesByComment[userID]; !exists {
+		return false, nil
+	}
+
+	delete(likesByComment, userID)
+	if len(likesByComment) == 0 {
+		delete(r.likes, commentID)
+	}
+	if comment.LikeCount > 0 {
+		comment.LikeCount--
+	}
+	comment.UpdatedAt = time.Now().UTC()
+	return true, nil
 }
 
 func (r *MemoryRepository) SoftDeleteComment(ctx context.Context, commentID, authorID string) error {

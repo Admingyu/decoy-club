@@ -21,6 +21,10 @@ type ProfileResponse struct {
 	Profile Profile `json:"profile"`
 }
 
+type SearchUsersResponse struct {
+	Users []Profile `json:"users"`
+}
+
 type UpdateStatusRequest struct {
 	StatusText   string `json:"status_text"`
 	StatusPreset string `json:"status_preset"`

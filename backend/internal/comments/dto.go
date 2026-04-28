@@ -17,6 +17,8 @@ type CommentView struct {
 	ContentHTML     string         `json:"content_html"`
 	ParentCommentID *string        `json:"parent_comment_id,omitempty"`
 	ReplyToUserID   *string        `json:"reply_to_user_id,omitempty"`
+	LikeCount       int64          `json:"like_count"`
+	LikedByViewer   bool           `json:"liked_by_viewer"`
 	IsDeleted       bool           `json:"is_deleted"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
@@ -37,6 +39,10 @@ func NewCommentView(comment *Comment) *CommentView {
 }
 
 func NewCommentViewWithAuthor(comment *Comment, authorUsername string) *CommentView {
+	return NewCommentViewWithAuthorAndLike(comment, authorUsername, false)
+}
+
+func NewCommentViewWithAuthorAndLike(comment *Comment, authorUsername string, likedByViewer bool) *CommentView {
 	if comment == nil {
 		return nil
 	}
@@ -48,6 +54,8 @@ func NewCommentViewWithAuthor(comment *Comment, authorUsername string) *CommentV
 		AuthorUsername:  authorUsername,
 		ContentMarkdown: comment.ContentMarkdown,
 		ContentHTML:     comment.ContentHTML,
+		LikeCount:       comment.LikeCount,
+		LikedByViewer:   likedByViewer,
 		IsDeleted:       comment.IsDeleted,
 		CreatedAt:       comment.CreatedAt,
 		UpdatedAt:       comment.UpdatedAt,
@@ -76,6 +84,10 @@ func BuildCommentTree(comments []*Comment) []*CommentView {
 }
 
 func BuildCommentTreeWithAuthors(comments []*Comment, authorUsernames map[string]string) []*CommentView {
+	return BuildCommentTreeWithAuthorsAndLikes(comments, authorUsernames, nil)
+}
+
+func BuildCommentTreeWithAuthorsAndLikes(comments []*Comment, authorUsernames map[string]string, likedCommentIDs map[string]bool) []*CommentView {
 	if len(comments) == 0 {
 		return []*CommentView{}
 	}
@@ -88,7 +100,11 @@ func BuildCommentTreeWithAuthors(comments []*Comment, authorUsernames map[string
 		if authorUsernames != nil {
 			username = authorUsernames[comment.AuthorID.Hex()]
 		}
-		view := NewCommentViewWithAuthor(comment, username)
+		liked := false
+		if likedCommentIDs != nil {
+			liked = likedCommentIDs[comment.ID.Hex()]
+		}
+		view := NewCommentViewWithAuthorAndLike(comment, username, liked)
 		index[view.ID] = view
 		if comment.ParentCommentID == nil {
 			roots = append(roots, view)

@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { createComment, fetchPost, fetchPostComments, likePost, unlikePost, type ApiComment, type ApiPost } from '../api/client'
 import CommentThread from '../components/CommentThread.vue'
+import MarkdownContent from '../components/MarkdownContent.vue'
 import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
@@ -39,7 +40,7 @@ async function loadPostDetail() {
   try {
     const [postResponse, commentsResponse] = await Promise.all([
       fetchPost(postId.value, authStore.token || undefined),
-      fetchPostComments(postId.value),
+      fetchPostComments(postId.value, authStore.token || undefined),
     ])
     post.value = postResponse.post
     comments.value = commentsResponse.comments
@@ -121,7 +122,7 @@ onMounted(loadPostDetail)
             </div>
           </header>
 
-          <div class="post-card__body" v-html="post.content_html" />
+          <MarkdownContent class="post-card__body" :content="post.content_markdown" />
 
           <div v-if="post.embedded_images.length" class="post-card__images">
             <img v-for="image in post.embedded_images" :key="image" class="post-card__image" :src="image" alt="embedded image" />

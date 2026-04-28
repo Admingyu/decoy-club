@@ -72,6 +72,14 @@ onMounted(() => {
           <span>广场</span>
         </RouterLink>
 
+        <RouterLink class="app-nav-link" to="/search">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m16 16 4 4" />
+          </svg>
+          <span>搜索</span>
+        </RouterLink>
+
         <template v-if="authStore.token">
           <RouterLink class="app-nav-link" to="/following">
             <svg viewBox="0 0 24 24" aria-hidden="true">

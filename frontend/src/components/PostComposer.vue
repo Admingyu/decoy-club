@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { createPost, uploadImage } from '../api/client'
 import { useAuthStore } from '../stores/auth'
+import { convertRichHtmlToMarkdown, getClipboardImageFiles } from './richPaste'
 
 const emit = defineEmits<{
   posted: []
@@ -16,6 +17,12 @@ const uploadMessage = ref('')
 
 const canSubmit = computed(() => Boolean(authStore.token && content.value.trim()) && !isSubmitting.value)
 
+type TextareaInsertion = {
+  textarea: HTMLTextAreaElement
+  start: number
+  end: number
+}
+
 async function onUploadChange(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -23,19 +30,8 @@ async function onUploadChange(event: Event) {
     return
   }
 
-  uploadMessage.value = 'Uploading image...'
-  errorMessage.value = ''
-  try {
-    const response = await uploadImage(authStore.token, file)
-    imageUrls.value = [...imageUrls.value, response.file.public_url]
-    content.value = `${content.value}${content.value ? '\n' : ''}![${response.file.file_name}](${response.file.public_url})`
-    uploadMessage.value = 'Image uploaded and inserted into your post.'
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Failed to upload image'
-    uploadMessage.value = ''
-  } finally {
-    input.value = ''
-  }
+  await uploadAndInsertImages([file])
+  input.value = ''
 }
 
 async function submitPost() {
@@ -57,6 +53,79 @@ async function submitPost() {
     isSubmitting.value = false
   }
 }
+
+async function onPaste(event: ClipboardEvent) {
+  const pastedImages = getClipboardImageFiles(event.clipboardData)
+  if (pastedImages.length) {
+    event.preventDefault()
+    const textarea = event.target as HTMLTextAreaElement
+    await uploadAndInsertImages(pastedImages, {
+      textarea,
+      start: textarea.selectionStart ?? content.value.length,
+      end: textarea.selectionEnd ?? textarea.selectionStart ?? content.value.length,
+    })
+    return
+  }
+
+  const html = event.clipboardData?.getData('text/html')
+  if (!html) {
+    return
+  }
+
+  const markdown = convertRichHtmlToMarkdown(html)
+  if (!markdown) {
+    return
+  }
+
+  event.preventDefault()
+  insertMarkdown(markdown, {
+    textarea: event.target as HTMLTextAreaElement,
+    start: (event.target as HTMLTextAreaElement).selectionStart ?? content.value.length,
+    end: (event.target as HTMLTextAreaElement).selectionEnd ?? (event.target as HTMLTextAreaElement).selectionStart ?? content.value.length,
+  })
+}
+
+async function uploadAndInsertImages(files: File[], insertion?: TextareaInsertion) {
+  if (!authStore.token || files.length === 0) {
+    return
+  }
+
+  uploadMessage.value = files.length === 1 ? 'Uploading image...' : 'Uploading images...'
+  errorMessage.value = ''
+  try {
+    const uploadedFiles = []
+    for (const file of files) {
+      const response = await uploadImage(authStore.token, file)
+      uploadedFiles.push(response.file)
+    }
+
+    imageUrls.value = [...imageUrls.value, ...uploadedFiles.map((file) => file.public_url)]
+    insertMarkdown(uploadedFiles.map((file) => `![${file.file_name}](${file.public_url})`).join('\n'), insertion)
+    uploadMessage.value = uploadedFiles.length === 1 ? 'Image uploaded and inserted into your post.' : 'Images uploaded and inserted into your post.'
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Failed to upload image'
+    uploadMessage.value = ''
+  }
+}
+
+function insertMarkdown(markdown: string, insertion?: TextareaInsertion) {
+  const start = insertion?.start ?? content.value.length
+  const end = insertion?.end ?? start
+  const before = content.value.slice(0, start)
+  const after = content.value.slice(end)
+  const prefix = before && !before.endsWith('\n') ? '\n' : ''
+  const suffix = after && !after.startsWith('\n') ? '\n' : ''
+  content.value = `${before}${prefix}${markdown}${suffix}${after}`
+
+  if (!insertion) {
+    return
+  }
+
+  void nextTick(() => {
+    const cursor = before.length + prefix.length + markdown.length
+    insertion.textarea.setSelectionRange(cursor, cursor)
+  })
+}
 </script>
 
 <template>
@@ -66,6 +135,7 @@ async function submitPost() {
       class="composer__textarea"
       placeholder="Share an experiment, a result, or a prompt pattern..."
       rows="8"
+      @paste="onPaste"
     />
 
     <div class="composer__actions">

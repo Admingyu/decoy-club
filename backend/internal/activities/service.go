@@ -16,6 +16,7 @@ type Counts struct {
 type Repository interface {
 	RecordPostView(ctx context.Context, userID, postID string) error
 	RecordPostLike(ctx context.Context, userID, postID string) error
+	RecordCommentLike(ctx context.Context, userID, postID, commentID string) error
 	RecordComment(ctx context.Context, userID, postID, commentID string) error
 	Counts(ctx context.Context, userID string) (Counts, error)
 	List(ctx context.Context, userID string, activityType ActivityType, limit int) ([]*Activity, error)
@@ -41,6 +42,13 @@ func (s *Service) RecordPostLike(ctx context.Context, userID, postID string) err
 		return nil
 	}
 	return s.repo.RecordPostLike(ctx, userID, postID)
+}
+
+func (s *Service) RecordCommentLike(ctx context.Context, userID, postID, commentID string) error {
+	if s == nil || s.repo == nil || userID == "" || postID == "" || commentID == "" {
+		return nil
+	}
+	return s.repo.RecordCommentLike(ctx, userID, postID, commentID)
 }
 
 func (s *Service) RecordComment(ctx context.Context, userID, postID, commentID string) error {

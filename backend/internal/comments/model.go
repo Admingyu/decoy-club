@@ -14,6 +14,7 @@ type Comment struct {
 	ContentHTML     string         `bson:"content_html" json:"content_html"`
 	ParentCommentID *bson.ObjectID `bson:"parent_comment_id" json:"parent_comment_id"`
 	ReplyToUserID   *bson.ObjectID `bson:"reply_to_user_id" json:"reply_to_user_id"`
+	LikeCount       int64          `bson:"like_count" json:"like_count"`
 	IsDeleted       bool           `bson:"is_deleted" json:"is_deleted"`
 	CreatedAt       time.Time      `bson:"created_at" json:"created_at"`
 	UpdatedAt       time.Time      `bson:"updated_at" json:"updated_at"`

@@ -27,7 +27,7 @@ func (h *Handler) ListPostComments(c *gin.Context) {
 		return
 	}
 
-	response.JSON(c, http.StatusOK, CommentListResponse{Comments: h.buildCommentTree(c.Request.Context(), comments)})
+	response.JSON(c, http.StatusOK, CommentListResponse{Comments: h.buildCommentTree(c.Request.Context(), c.GetString(users.ContextKeyViewerID), comments)})
 }
 
 func (h *Handler) CreatePostComment(c *gin.Context) {
@@ -102,6 +102,33 @@ func (h *Handler) DeleteComment(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *Handler) LikeComment(c *gin.Context) {
+	h.likeAction(c, h.svc.LikeComment)
+}
+
+func (h *Handler) UnlikeComment(c *gin.Context) {
+	h.likeAction(c, h.svc.UnlikeComment)
+}
+
+func (h *Handler) likeAction(c *gin.Context, action func(ctx context.Context, commentID, userID string) error) {
+	viewerID := c.GetString(users.ContextKeyViewerID)
+	if viewerID == "" {
+		response.JSON(c, http.StatusUnauthorized, gin.H{"error": "missing viewer identity"})
+		return
+	}
+
+	if err := action(c.Request.Context(), c.Param("commentId"), viewerID); err != nil {
+		status := http.StatusBadRequest
+		if err == ErrCommentNotFound {
+			status = http.StatusNotFound
+		}
+		response.JSON(c, status, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
 func (h *Handler) newCommentView(ctx context.Context, comment *Comment) *CommentView {
 	if comment == nil {
 		return nil
@@ -112,10 +139,10 @@ func (h *Handler) newCommentView(ctx context.Context, comment *Comment) *Comment
 			username = user.Username
 		}
 	}
-	return NewCommentViewWithAuthor(comment, username)
+	return NewCommentViewWithAuthorAndLike(comment, username, false)
 }
 
-func (h *Handler) buildCommentTree(ctx context.Context, comments []*Comment) []*CommentView {
+func (h *Handler) buildCommentTree(ctx context.Context, viewerID string, comments []*Comment) []*CommentView {
 	if len(comments) == 0 {
 		return []*CommentView{}
 	}
@@ -131,5 +158,15 @@ func (h *Handler) buildCommentTree(ctx context.Context, comments []*Comment) []*
 			}
 		}
 	}
-	return BuildCommentTreeWithAuthors(comments, authorUsernames)
+	likedCommentIDs := map[string]bool{}
+	if viewerID != "" {
+		commentIDs := make([]string, 0, len(comments))
+		for _, comment := range comments {
+			commentIDs = append(commentIDs, comment.ID.Hex())
+		}
+		if liked, err := h.svc.repo.ListLikedCommentIDs(ctx, viewerID, commentIDs); err == nil {
+			likedCommentIDs = liked
+		}
+	}
+	return BuildCommentTreeWithAuthorsAndLikes(comments, authorUsernames, likedCommentIDs)
 }

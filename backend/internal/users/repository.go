@@ -3,6 +3,9 @@ package users
 import (
 	"context"
 	"errors"
+	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +19,7 @@ var ErrUserNotFound = errors.New("user not found")
 type Repository interface {
 	FindByUsername(ctx context.Context, username string) (*User, error)
 	FindByID(ctx context.Context, id string) (*User, error)
+	SearchUsers(ctx context.Context, query string, limit int) ([]*User, error)
 	IsFollowing(ctx context.Context, followerID, followeeID string) (bool, error)
 	ListFollowingIDs(ctx context.Context, followerID string) ([]string, error)
 	RunFollowTransaction(ctx context.Context, followerID, followeeID string) error
@@ -83,6 +87,46 @@ func (r *MongoRepository) FindByID(ctx context.Context, id string) (*User, error
 	}
 
 	return &user, nil
+}
+
+func (r *MongoRepository) SearchUsers(ctx context.Context, query string, limit int) ([]*User, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return []*User{}, nil
+	}
+
+	pattern := regexp.QuoteMeta(query)
+	filter := bson.M{
+		"$or": bson.A{
+			bson.M{"username": bson.M{"$regex": pattern, "$options": "i"}},
+			bson.M{"bio": bson.M{"$regex": pattern, "$options": "i"}},
+		},
+	}
+	opts := options.Find().
+		SetLimit(int64(limit)).
+		SetSort(bson.D{{Key: "followers_count", Value: -1}, {Key: "username", Value: 1}})
+
+	cursor, err := r.usersCollection().Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	users := make([]*User, 0)
+	for cursor.Next(ctx) {
+		var user User
+		if err := cursor.Decode(&user); err != nil {
+			return nil, err
+		}
+		users = append(users, &user)
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+
+	return users, nil
 }
 
 func (r *MongoRepository) IsFollowing(ctx context.Context, followerID, followeeID string) (bool, error) {
@@ -370,6 +414,34 @@ func (r *MemoryRepository) FindByID(_ context.Context, id string) (*User, error)
 	}
 
 	return nil, ErrUserNotFound
+}
+
+func (r *MemoryRepository) SearchUsers(_ context.Context, query string, limit int) ([]*User, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if limit <= 0 {
+		return []*User{}, nil
+	}
+
+	needle := strings.ToLower(query)
+	matches := make([]*User, 0)
+	for _, user := range r.users {
+		if strings.Contains(strings.ToLower(user.Username), needle) || strings.Contains(strings.ToLower(user.Bio), needle) {
+			matches = append(matches, user)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].FollowersCount == matches[j].FollowersCount {
+			return matches[i].Username < matches[j].Username
+		}
+		return matches[i].FollowersCount > matches[j].FollowersCount
+	})
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+
+	return matches, nil
 }
 
 func (r *MemoryRepository) IsFollowing(_ context.Context, followerID, followeeID string) (bool, error) {

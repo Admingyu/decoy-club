@@ -22,6 +22,7 @@ type Notifier interface {
 
 type ActivityRecorder interface {
 	RecordComment(ctx context.Context, userID, postID, commentID string) error
+	RecordCommentLike(ctx context.Context, userID, postID, commentID string) error
 }
 
 type CreateCommentInput struct {
@@ -124,6 +125,24 @@ func (s *Service) ReplyToComment(ctx context.Context, parentCommentID, authorID,
 
 func (s *Service) ListCommentsByPostID(ctx context.Context, postID string) ([]*Comment, error) {
 	return s.repo.ListCommentsByPostID(ctx, postID)
+}
+
+func (s *Service) LikeComment(ctx context.Context, commentID, userID string) error {
+	changed, err := s.repo.LikeComment(ctx, commentID, userID)
+	if err != nil || !changed || s.activityRecorder == nil {
+		return err
+	}
+
+	comment, err := s.repo.FindCommentByID(ctx, commentID)
+	if err != nil {
+		return err
+	}
+	return s.activityRecorder.RecordCommentLike(ctx, userID, comment.PostID.Hex(), comment.ID.Hex())
+}
+
+func (s *Service) UnlikeComment(ctx context.Context, commentID, userID string) error {
+	_, err := s.repo.UnlikeComment(ctx, commentID, userID)
+	return err
 }
 
 func (s *Service) DeleteComment(ctx context.Context, commentID, authorID string) error {

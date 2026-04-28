@@ -15,6 +15,7 @@ import {
   type ApiPost,
   type ApiProfile,
 } from '../api/client'
+import MarkdownContent from '../components/MarkdownContent.vue'
 import PostCard from '../components/PostCard.vue'
 import { useAuthStore } from '../stores/auth'
 
@@ -241,10 +242,14 @@ watch(() => route.params.username, () => {
                 <span v-if="activity.type === 'view' && activity.count > 1">x{{ activity.count }}</span>
               </div>
               <PostCard v-if="activity.post" :post="activity.post" />
-              <div v-if="activity.comment" class="activity-card__comment">
+              <RouterLink
+                v-if="activity.comment"
+                class="activity-card__comment"
+                :to="`/posts/${activity.comment.post_id}`"
+              >
                 <p class="timeline__eyebrow">Comment</p>
-                <div v-html="activity.comment.content_html" />
-              </div>
+                <MarkdownContent :content="activity.comment.content_markdown" />
+              </RouterLink>
             </article>
           </div>
         </section>

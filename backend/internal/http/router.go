@@ -109,6 +109,7 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 	api.POST("/auth/login", authHandler.Login)
 
 	usersGroup := api.Group("/users", optionalViewerID(cfg.JWTSecret))
+	usersGroup.GET("/search", userHandler.SearchUsers)
 	usersGroup.GET("/:username/profile", userHandler.GetProfile)
 	usersGroup.GET("/:username/posts", postHandler.ListPostsByUsername)
 	usersGroup.GET("/:username/activity-counts", activityHandler.GetCounts)
@@ -121,7 +122,7 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 
 	api.GET("/posts", optionalViewerID(cfg.JWTSecret), postHandler.ListPublicTimeline)
 	api.GET("/posts/:postId", optionalViewerID(cfg.JWTSecret), postHandler.GetPost)
-	api.GET("/posts/:postId/comments", commentHandler.ListPostComments)
+	api.GET("/posts/:postId/comments", optionalViewerID(cfg.JWTSecret), commentHandler.ListPostComments)
 	api.GET("/topics/trending", postHandler.ListTrendingTopics)
 
 	authedPosts := api.Group("/posts", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
@@ -132,6 +133,8 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 	authedPosts.POST("/:postId/comments", commentHandler.CreatePostComment)
 
 	authedComments := api.Group("/comments", auth.Middleware(cfg.JWTSecret), viewerIDFromClaims())
+	authedComments.POST("/:commentId/like", commentHandler.LikeComment)
+	authedComments.DELETE("/:commentId/like", commentHandler.UnlikeComment)
 	authedComments.POST("/:commentId/replies", commentHandler.ReplyToComment)
 	authedComments.DELETE("/:commentId", commentHandler.DeleteComment)
 

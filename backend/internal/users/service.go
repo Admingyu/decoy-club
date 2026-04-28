@@ -13,6 +13,8 @@ var ErrStatusTooLong = errors.New("status text is too long")
 const (
 	MaxStatusTextLength   = 80
 	MaxStatusPresetLength = 32
+	DefaultSearchLimit    = 12
+	MaxSearchLimit        = 25
 )
 
 type Service struct {
@@ -42,6 +44,35 @@ func (s *Service) GetProfileForUser(ctx context.Context, user *User, viewerID st
 	}
 
 	return s.profileFromUser(ctx, user, viewerID)
+}
+
+func (s *Service) SearchUsers(ctx context.Context, query, viewerID string, limit int) ([]Profile, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []Profile{}, nil
+	}
+	if limit <= 0 {
+		limit = DefaultSearchLimit
+	}
+	if limit > MaxSearchLimit {
+		limit = MaxSearchLimit
+	}
+
+	matches, err := s.repo.SearchUsers(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	profiles := make([]Profile, 0, len(matches))
+	for _, user := range matches {
+		profile, err := s.profileFromUser(ctx, user, viewerID)
+		if err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, *profile)
+	}
+
+	return profiles, nil
 }
 
 func (s *Service) profileFromUser(ctx context.Context, user *User, viewerID string) (*Profile, error) {

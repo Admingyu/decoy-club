@@ -129,7 +129,13 @@ func (h *Handler) newActivityViews(c *gin.Context, activities []*Activity, viewe
 						authorUsername = author.Username
 					}
 				}
-				view.Comment = comments.NewCommentViewWithAuthor(comment, authorUsername)
+				liked := false
+				if viewerID != "" {
+					if likedResult, err := h.commentsRepo.HasLike(c.Request.Context(), comment.ID.Hex(), viewerID); err == nil {
+						liked = likedResult
+					}
+				}
+				view.Comment = comments.NewCommentViewWithAuthorAndLike(comment, authorUsername, liked)
 			}
 		}
 		views = append(views, view)

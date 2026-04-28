@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"decoy-club/backend/internal/common/response"
 
@@ -33,6 +34,27 @@ func (h *Handler) GetProfile(c *gin.Context) {
 	}
 
 	response.JSON(c, http.StatusOK, ProfileResponse{Profile: *profile})
+}
+
+func (h *Handler) SearchUsers(c *gin.Context) {
+	viewerID := c.GetString(ContextKeyViewerID)
+	limit := DefaultSearchLimit
+	if rawLimit := c.Query("limit"); rawLimit != "" {
+		parsedLimit, err := strconv.Atoi(rawLimit)
+		if err != nil {
+			response.JSON(c, http.StatusBadRequest, gin.H{"error": "invalid limit"})
+			return
+		}
+		limit = parsedLimit
+	}
+
+	users, err := h.svc.SearchUsers(c.Request.Context(), c.Query("q"), viewerID, limit)
+	if err != nil {
+		response.JSON(c, http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	response.JSON(c, http.StatusOK, SearchUsersResponse{Users: users})
 }
 
 func (h *Handler) Follow(c *gin.Context) {

@@ -29,6 +29,8 @@ func Run() error {
 		Database: client.Database(cfg.DatabaseName),
 	})
 
+	fmt.Printf("Server is running on port %s\n", cfg.Port)
+
 	if err := router.Run(cfg.Port); err != nil {
 		return fmt.Errorf("run server: %w", err)
 	}

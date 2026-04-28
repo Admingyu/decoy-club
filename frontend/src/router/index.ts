@@ -7,6 +7,7 @@ import NotificationsView from '../views/NotificationsView.vue'
 import PostDetailView from '../views/PostDetailView.vue'
 import ProfileView from '../views/ProfileView.vue'
 import RegisterView from '../views/RegisterView.vue'
+import SearchView from '../views/SearchView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -18,6 +19,7 @@ const router = createRouter({
     { path: '/notifications', component: NotificationsView },
     { path: '/posts/:postId', component: PostDetailView },
     { path: '/register', component: RegisterView },
+    { path: '/search', component: SearchView },
     { path: '/u/:username', component: ProfileView },
   ],
 })

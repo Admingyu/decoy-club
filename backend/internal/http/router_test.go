@@ -41,6 +41,18 @@ func TestRouterRegistersAuthRoutes(t *testing.T) {
 	}
 }
 
+func TestRouterRegistersUserSearchRoute(t *testing.T) {
+	router := apphttp.NewRouter(nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/search?q=alice", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("expected user search route to be registered")
+	}
+}
+
 func TestRouterRegistersCommentRoutes(t *testing.T) {
 	router := apphttp.NewRouter(nil)
 
@@ -56,6 +68,13 @@ func TestRouterRegistersCommentRoutes(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	if rec.Code == http.StatusNotFound {
 		t.Fatal("expected reply route to be registered")
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/comments/507f1f77bcf86cd799439011/like", bytes.NewBufferString(`{}`))
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("expected comment like route to be registered")
 	}
 }
 

@@ -34,6 +34,10 @@ func (r *MongoRepository) RecordPostLike(ctx context.Context, userID, postID str
 	return r.record(ctx, userID, postID, "", ActivityTypeLike, false)
 }
 
+func (r *MongoRepository) RecordCommentLike(ctx context.Context, userID, postID, commentID string) error {
+	return r.record(ctx, userID, postID, commentID, ActivityTypeLike, false)
+}
+
 func (r *MongoRepository) RecordComment(ctx context.Context, userID, postID, commentID string) error {
 	return r.record(ctx, userID, postID, commentID, ActivityTypeComment, false)
 }
@@ -203,6 +207,10 @@ func (r *MemoryRepository) RecordPostView(_ context.Context, userID, postID stri
 
 func (r *MemoryRepository) RecordPostLike(_ context.Context, userID, postID string) error {
 	return r.record(userID, postID, "", ActivityTypeLike, false)
+}
+
+func (r *MemoryRepository) RecordCommentLike(_ context.Context, userID, postID, commentID string) error {
+	return r.record(userID, postID, commentID, ActivityTypeLike, false)
 }
 
 func (r *MemoryRepository) RecordComment(_ context.Context, userID, postID, commentID string) error {

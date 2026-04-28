@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { likePost, unlikePost, type ApiPost } from '../api/client'
 import { useAuthStore } from '../stores/auth'
+import MarkdownContent from './MarkdownContent.vue'
 
 const props = defineProps<{
   post: ApiPost
@@ -71,7 +72,7 @@ async function toggleLike() {
         </header>
 
         <div class="post-card__content">
-          <div class="post-card__body" v-html="post.content_html" />
+          <MarkdownContent class="post-card__body" :content="post.content_markdown" />
 
           <div v-if="embeddedImages.length" class="post-card__images">
             <img

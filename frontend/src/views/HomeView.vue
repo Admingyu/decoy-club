@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { fetchPublicPosts, fetchTrendingTopics, type ApiPost, type Topic } from '../api/client'
 import PostCard from '../components/PostCard.vue'
 import PostComposer from '../components/PostComposer.vue'
 import { useAuthStore } from '../stores/auth'
 
 const authStore = useAuthStore()
+const router = useRouter()
 const posts = ref<ApiPost[]>([])
 const isLoading = ref(true)
 const errorMessage = ref('')
 const topics = ref<Topic[]>([])
+const searchQuery = ref('')
 
 const isLoggedIn = computed(() => Boolean(authStore.token))
 
@@ -33,6 +36,14 @@ async function loadTopics() {
   } catch {
     topics.value = []
   }
+}
+
+function submitSearch() {
+  const normalizedQuery = searchQuery.value.trim()
+  void router.push({
+    path: '/search',
+    query: normalizedQuery ? { q: normalizedQuery } : {},
+  })
 }
 
 onMounted(() => {
@@ -82,13 +93,15 @@ onMounted(() => {
     </main>
 
     <aside class="home-rail" aria-label="Community side panel">
-      <label class="search-box">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="11" cy="11" r="7" />
-          <path d="m16 16 4 4" />
-        </svg>
-        <input type="search" placeholder="搜一搜..." />
-      </label>
+      <form class="rail-search" @submit.prevent="submitSearch">
+        <label class="search-box">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m16 16 4 4" />
+          </svg>
+          <input v-model="searchQuery" type="search" placeholder="搜索用户" />
+        </label>
+      </form>
 
       <section class="rail-section">
         <h2>热门话题</h2>

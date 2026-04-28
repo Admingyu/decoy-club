@@ -2,6 +2,7 @@ package users
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -71,6 +72,27 @@ func TestUpdateStatusRejectsTooLongText(t *testing.T) {
 	}
 }
 
+func TestSearchUsersReturnsMatchingProfilesWithFollowState(t *testing.T) {
+	repo := newFakeUserRepo()
+	svc := NewService(repo)
+
+	viewerID := repo.users["viewer"].ID.Hex()
+	authorID := repo.users["author"].ID.Hex()
+	repo.follows[viewerID] = map[string]struct{}{authorID: {}}
+
+	profiles, err := svc.SearchUsers(context.Background(), " auth ", viewerID, 10)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	if len(profiles) != 1 {
+		t.Fatalf("expected 1 matching profile, got %d", len(profiles))
+	}
+	if profiles[0].Username != "author" || !profiles[0].Following {
+		t.Fatalf("expected followed author profile, got %+v", profiles[0])
+	}
+}
+
 type fakeUserRepo struct {
 	users          map[string]*User
 	usersByID      map[string]*User
@@ -136,6 +158,19 @@ func (r *fakeUserRepo) ListFollowingIDs(_ context.Context, followerID string) ([
 	}
 
 	return followingIDs, nil
+}
+
+func (r *fakeUserRepo) SearchUsers(_ context.Context, query string, limit int) ([]*User, error) {
+	users := make([]*User, 0)
+	for _, user := range r.users {
+		if len(users) >= limit {
+			break
+		}
+		if strings.Contains(user.Username, query) {
+			users = append(users, user)
+		}
+	}
+	return users, nil
 }
 
 func (r *fakeUserRepo) RunFollowTransaction(_ context.Context, followerID, followeeID string) error {

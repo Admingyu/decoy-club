@@ -46,10 +46,35 @@ export type ApiComment = {
   content_html: string
   parent_comment_id?: string
   reply_to_user_id?: string
+  like_count: number
+  liked_by_viewer?: boolean
   is_deleted: boolean
   created_at: string
   updated_at: string
   replies: ApiComment[]
+}
+
+export function normalizeComment(comment: ApiComment): ApiComment {
+  return {
+    ...comment,
+    like_count: typeof comment.like_count === 'number' ? comment.like_count : 0,
+    liked_by_viewer: Boolean(comment.liked_by_viewer),
+    replies: Array.isArray(comment.replies) ? comment.replies.map(normalizeComment) : [],
+  }
+}
+
+function normalizeCommentResponse(response: { comment: ApiComment }) {
+  return {
+    ...response,
+    comment: normalizeComment(response.comment),
+  }
+}
+
+function normalizeCommentsResponse(response: { comments: ApiComment[] | null }) {
+  return {
+    ...response,
+    comments: Array.isArray(response.comments) ? response.comments.map(normalizeComment) : [],
+  }
 }
 
 export type ApiUser = {
@@ -72,6 +97,13 @@ export type ApiProfile = {
   received_like_count: number
   given_like_count: number
   following: boolean
+}
+
+export function normalizeUserSearchResponse(response: { users: ApiProfile[] | null }) {
+  return {
+    ...response,
+    users: Array.isArray(response.users) ? response.users : [],
+  }
 }
 
 export type ActivityType = 'views' | 'likes' | 'comments'
@@ -185,8 +217,8 @@ export function fetchPost(postId: string, token?: string) {
   return request<{ post: ApiPost }>(`/posts/${postId}`, {}, token).then(normalizePostResponse)
 }
 
-export function fetchPostComments(postId: string) {
-  return request<{ comments: ApiComment[] }>(`/posts/${postId}/comments`)
+export function fetchPostComments(postId: string, token?: string) {
+  return request<{ comments: ApiComment[] | null }>(`/posts/${postId}/comments`, {}, token).then(normalizeCommentsResponse)
 }
 
 export function createPost(token: string, contentMarkdown: string, embeddedImages: string[]) {
@@ -203,14 +235,14 @@ export function createComment(token: string, postId: string, contentMarkdown: st
   return request<{ comment: ApiComment }>(`/posts/${postId}/comments`, {
     method: 'POST',
     body: JSON.stringify({ content_markdown: contentMarkdown }),
-  }, token)
+  }, token).then(normalizeCommentResponse)
 }
 
 export function replyToComment(token: string, commentId: string, contentMarkdown: string) {
   return request<{ comment: ApiComment }>(`/comments/${commentId}/replies`, {
     method: 'POST',
     body: JSON.stringify({ content_markdown: contentMarkdown }),
-  }, token)
+  }, token).then(normalizeCommentResponse)
 }
 
 export function likePost(token: string, postId: string) {
@@ -219,6 +251,14 @@ export function likePost(token: string, postId: string) {
 
 export function unlikePost(token: string, postId: string) {
   return request<void>(`/posts/${postId}/like`, { method: 'DELETE' }, token)
+}
+
+export function likeComment(token: string, commentId: string) {
+  return request<void>(`/comments/${commentId}/like`, { method: 'POST' }, token)
+}
+
+export function unlikeComment(token: string, commentId: string) {
+  return request<void>(`/comments/${commentId}/like`, { method: 'DELETE' }, token)
 }
 
 export function uploadImage(token: string, file: File) {
@@ -264,6 +304,13 @@ export function markNotificationsRead(token: string, notificationIds: string[]) 
 
 export function fetchProfile(username: string, token?: string) {
   return request<{ profile: ApiProfile }>(`/users/${encodeURIComponent(username)}/profile`, {}, token)
+}
+
+export function searchUsers(query: string, token?: string) {
+  const params = new URLSearchParams()
+  params.set('q', query)
+  return request<{ users: ApiProfile[] | null }>(`/users/search?${params.toString()}`, {}, token)
+    .then(normalizeUserSearchResponse)
 }
 
 export function updateMyStatus(token: string, statusText: string, statusPreset: string) {
