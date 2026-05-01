@@ -11,6 +11,7 @@ import (
 	"decoy-club/backend/internal/users"
 
 	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 type Handler struct {
@@ -109,6 +110,45 @@ func (h *Handler) GetPost(c *gin.Context) {
 	viewerID := c.GetString(users.ContextKeyViewerID)
 	_ = h.svc.RecordPostView(c.Request.Context(), viewerID, post.ID.Hex())
 	response.JSON(c, http.StatusOK, PostResponse{Post: h.newPostView(c.Request.Context(), post, viewerID)})
+}
+
+func (h *Handler) ListPostLikers(c *gin.Context) {
+	postID := c.Param("postId")
+	if _, err := bson.ObjectIDFromHex(postID); err != nil {
+		response.JSON(c, http.StatusBadRequest, gin.H{"error": ErrPostNotFound.Error()})
+		return
+	}
+
+	post, err := h.svc.GetPost(c.Request.Context(), postID)
+	if err != nil {
+		status := http.StatusBadRequest
+		if err == ErrPostNotFound {
+			status = http.StatusNotFound
+		}
+		response.JSON(c, status, gin.H{"error": err.Error()})
+		return
+	}
+
+	limit := 6
+	if raw := c.Query("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 12 {
+		limit = 12
+	}
+
+	likers, err := h.svc.ListPostLikers(c.Request.Context(), postID, limit)
+	if err != nil {
+		response.JSON(c, http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	response.JSON(c, http.StatusOK, PostLikeDetailResponse{
+		Likers: NewPostLikerViews(likers),
+		Total:  post.LikeCount,
+	})
 }
 
 func (h *Handler) DeletePost(c *gin.Context) {

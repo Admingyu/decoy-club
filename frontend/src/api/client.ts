@@ -84,6 +84,12 @@ export type ApiUser = {
   bio?: string
 }
 
+export type ApiPostLiker = {
+  id: string
+  username: string
+  avatar_url?: string
+}
+
 export type ApiProfile = {
   username: string
   avatar_url?: string
@@ -215,6 +221,14 @@ export function fetchFollowingPosts(token: string) {
 
 export function fetchPost(postId: string, token?: string) {
   return request<{ post: ApiPost }>(`/posts/${postId}`, {}, token).then(normalizePostResponse)
+}
+
+export function fetchPostLikers(postId: string, limit = 6) {
+  return request<{ likers: ApiPostLiker[] | null; total: number }>(`/posts/${postId}/likes?limit=${limit}`)
+    .then((response) => ({
+      ...response,
+      likers: Array.isArray(response.likers) ? response.likers : [],
+    }))
 }
 
 export function fetchPostComments(postId: string, token?: string) {

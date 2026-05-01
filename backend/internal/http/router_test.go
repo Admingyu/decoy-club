@@ -78,6 +78,17 @@ func TestRouterRegistersCommentRoutes(t *testing.T) {
 	}
 }
 
+func TestRouterRegistersPostLikeDetailRoute(t *testing.T) {
+	router := apphttp.NewRouter(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/posts/not-a-post/likes", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("expected post like detail route to be registered")
+	}
+}
+
 func TestRouterRegistersNotificationRoutes(t *testing.T) {
 	router := apphttp.NewRouter(nil)
 

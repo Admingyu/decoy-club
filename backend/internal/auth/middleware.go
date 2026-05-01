@@ -30,7 +30,7 @@ func Middleware(secret string) gin.HandlerFunc {
 
 		claims, err := VerifyJWT(secret, token)
 		if err != nil {
-			response.JSON(c, http.StatusUnauthorized, gin.H{"error": "invalid authorization token"})
+			response.JSON(c, http.StatusUnauthorized, gin.H{"error": err.Error()})
 			c.Abort()
 			return
 		}

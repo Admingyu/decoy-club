@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"decoy-club/backend/internal/users"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
@@ -58,6 +59,25 @@ func TestLikePostIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestListPostLikersReturnsRepositoryUsers(t *testing.T) {
+	repo := newFakePostRepo()
+	repo.likers["post-1"] = []*users.User{
+		{ID: mustObjectID("507f1f77bcf86cd799439031"), Username: "ada", AvatarURL: "/uploads/ada.png"},
+	}
+	svc := NewService(repo, nil)
+
+	likers, err := svc.ListPostLikers(context.Background(), "post-1", 6)
+	if err != nil {
+		t.Fatalf("list likers failed: %v", err)
+	}
+	if len(likers) != 1 {
+		t.Fatalf("expected one liker, got %d", len(likers))
+	}
+	if likers[0].Username != "ada" || likers[0].AvatarURL != "/uploads/ada.png" {
+		t.Fatalf("unexpected liker: %+v", likers[0])
+	}
+}
+
 func TestUnlikePostIsIdempotent(t *testing.T) {
 	repo := newFakePostRepo()
 	svc := NewService(repo, nil)
@@ -102,6 +122,7 @@ type fakePostRepo struct {
 	posts              map[string]*Post
 	follows            map[string]map[string]struct{}
 	likes              map[string]map[string]struct{}
+	likers             map[string][]*users.User
 	postCountDelta     int64
 	likeCountDelta     int64
 	lastPublicBefore   *time.Time
@@ -113,6 +134,7 @@ func newFakePostRepo() *fakePostRepo {
 		posts:   make(map[string]*Post),
 		follows: make(map[string]map[string]struct{}),
 		likes:   make(map[string]map[string]struct{}),
+		likers:  make(map[string][]*users.User),
 	}
 
 	now := time.Now().UTC()
@@ -370,6 +392,14 @@ func (r *fakePostRepo) ListLikedPostIDs(_ context.Context, userID string, postID
 		}
 	}
 	return result, nil
+}
+
+func (r *fakePostRepo) ListPostLikers(_ context.Context, postID string, limit int) ([]*users.User, error) {
+	likers := append([]*users.User{}, r.likers[postID]...)
+	if limit > 0 && len(likers) > limit {
+		likers = likers[:limit]
+	}
+	return likers, nil
 }
 
 var _ Repository = (*fakePostRepo)(nil)

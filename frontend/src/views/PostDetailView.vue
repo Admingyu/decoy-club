@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { createComment, fetchPost, fetchPostComments, likePost, unlikePost, type ApiComment, type ApiPost } from '../api/client'
+import {
+  createComment,
+  fetchPost,
+  fetchPostComments,
+  fetchPostLikers,
+  likePost,
+  unlikePost,
+  type ApiComment,
+  type ApiPost,
+  type ApiPostLiker,
+} from '../api/client'
 import CommentThread from '../components/CommentThread.vue'
 import MarkdownContent from '../components/MarkdownContent.vue'
 import { useAuthStore } from '../stores/auth'
@@ -11,6 +21,8 @@ const authStore = useAuthStore()
 
 const post = ref<ApiPost | null>(null)
 const comments = ref<ApiComment[]>([])
+const postLikers = ref<ApiPostLiker[]>([])
+const likeDetailTotal = ref(0)
 const isLoading = ref(true)
 const isCommentSubmitting = ref(false)
 const isLikeSubmitting = ref(false)
@@ -20,6 +32,7 @@ const commentContent = ref('')
 const postId = computed(() => String(route.params.postId ?? ''))
 const isLoggedIn = computed(() => Boolean(authStore.token))
 const liked = computed(() => Boolean(post.value?.liked_by_viewer))
+const showLikeDetail = computed(() => likeDetailTotal.value > 0 || Boolean(post.value && post.value.like_count > 0))
 
 function formatTime(value: string) {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -38,17 +51,33 @@ async function loadPostDetail() {
   isLoading.value = true
   errorMessage.value = ''
   try {
-    const [postResponse, commentsResponse] = await Promise.all([
+    const [postResponse, commentsResponse, likersResponse] = await Promise.all([
       fetchPost(postId.value, authStore.token || undefined),
       fetchPostComments(postId.value, authStore.token || undefined),
+      fetchPostLikers(postId.value),
     ])
     post.value = postResponse.post
     comments.value = commentsResponse.comments
+    postLikers.value = likersResponse.likers
+    likeDetailTotal.value = likersResponse.total
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Failed to load post detail'
   } finally {
     isLoading.value = false
   }
+}
+
+async function loadPostLikers() {
+  if (!postId.value) {
+    return
+  }
+  const response = await fetchPostLikers(postId.value)
+  postLikers.value = response.likers
+  likeDetailTotal.value = response.total
+}
+
+function likerInitials(liker: ApiPostLiker) {
+  return liker.username.slice(0, 2).toUpperCase()
 }
 
 async function submitComment() {
@@ -83,6 +112,7 @@ async function toggleLike() {
         liked_by_viewer: false,
         like_count: Math.max(0, post.value.like_count - 1),
       }
+      await loadPostLikers()
     } else {
       await likePost(authStore.token, post.value.id)
       post.value = {
@@ -90,6 +120,7 @@ async function toggleLike() {
         liked_by_viewer: true,
         like_count: post.value.like_count + 1,
       }
+      await loadPostLikers()
     }
   } finally {
     isLikeSubmitting.value = false
@@ -161,6 +192,22 @@ onMounted(loadPostDetail)
               <span>{{ post.comment_count }}</span>
             </a>
           </footer>
+
+          <div v-if="showLikeDetail" class="post-like-detail">
+            <div v-if="postLikers.length" class="post-like-detail__avatars" aria-label="点赞者">
+              <RouterLink
+                v-for="liker in postLikers"
+                :key="liker.id"
+                class="post-like-detail__avatar"
+                :to="`/u/${liker.username}`"
+                :title="`@${liker.username}`"
+              >
+                <img v-if="liker.avatar_url" :src="liker.avatar_url" :alt="`@${liker.username}`" />
+                <span v-else>{{ likerInitials(liker) }}</span>
+              </RouterLink>
+            </div>
+            <p>觉得很赞</p>
+          </div>
         </article>
 
         <section id="comments" class="timeline">

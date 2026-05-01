@@ -122,6 +122,7 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 
 	api.GET("/posts", optionalViewerID(cfg.JWTSecret), postHandler.ListPublicTimeline)
 	api.GET("/posts/:postId", optionalViewerID(cfg.JWTSecret), postHandler.GetPost)
+	api.GET("/posts/:postId/likes", postHandler.ListPostLikers)
 	api.GET("/posts/:postId/comments", optionalViewerID(cfg.JWTSecret), commentHandler.ListPostComments)
 	api.GET("/topics/trending", postHandler.ListTrendingTopics)
 

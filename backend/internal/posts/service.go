@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"decoy-club/backend/internal/common/textparse"
+	"decoy-club/backend/internal/users"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
@@ -22,6 +23,7 @@ type Repository interface {
 	ListPostsByAuthorID(ctx context.Context, authorID string, limit int) ([]*Post, error)
 	HasLike(ctx context.Context, postID, userID string) (bool, error)
 	ListLikedPostIDs(ctx context.Context, userID string, postIDs []string) (map[string]bool, error)
+	ListPostLikers(ctx context.Context, postID string, limit int) ([]*users.User, error)
 	SoftDeletePost(ctx context.Context, postID, authorID string) error
 	LikePost(ctx context.Context, postID, userID string) (bool, error)
 	UnlikePost(ctx context.Context, postID, userID string) (bool, error)
@@ -113,6 +115,10 @@ func (s *Service) ListPostsByAuthorID(ctx context.Context, authorID string, limi
 
 func (s *Service) GetPost(ctx context.Context, postID string) (*Post, error) {
 	return s.repo.FindPostByID(ctx, postID)
+}
+
+func (s *Service) ListPostLikers(ctx context.Context, postID string, limit int) ([]*users.User, error) {
+	return s.repo.ListPostLikers(ctx, postID, limit)
 }
 
 func (s *Service) RecordPostView(ctx context.Context, userID, postID string) error {

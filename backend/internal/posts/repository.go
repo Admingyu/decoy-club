@@ -409,6 +409,77 @@ func (r *MongoRepository) ListLikedPostIDs(ctx context.Context, userID string, p
 	return result, cursor.Err()
 }
 
+func (r *MongoRepository) ListPostLikers(ctx context.Context, postID string, limit int) ([]*users.User, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 6
+	}
+	postObjectID, err := bson.ObjectIDFromHex(postID)
+	if err != nil {
+		return nil, ErrPostNotFound
+	}
+	if err := r.postsCollection().FindOne(ctx, bson.M{"_id": postObjectID, "is_deleted": false}).Err(); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, ErrPostNotFound
+		}
+		return nil, err
+	}
+
+	cursor, err := r.likesCollection().Find(ctx, bson.M{"post_id": postObjectID}, options.Find().
+		SetSort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}).
+		SetLimit(int64(limit)))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	edges := make([]likeEdge, 0)
+	userIDs := make([]bson.ObjectID, 0)
+	for cursor.Next(ctx) {
+		var edge likeEdge
+		if err := cursor.Decode(&edge); err != nil {
+			return nil, err
+		}
+		edges = append(edges, edge)
+		userIDs = append(userIDs, edge.UserID)
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+	if len(userIDs) == 0 {
+		return []*users.User{}, nil
+	}
+
+	usersCursor, err := r.usersCollection().Find(ctx, bson.M{"_id": bson.M{"$in": userIDs}})
+	if err != nil {
+		return nil, err
+	}
+	defer usersCursor.Close(ctx)
+
+	usersByID := make(map[string]*users.User, len(userIDs))
+	for usersCursor.Next(ctx) {
+		var user users.User
+		if err := usersCursor.Decode(&user); err != nil {
+			return nil, err
+		}
+		cp := user
+		usersByID[user.ID.Hex()] = &cp
+	}
+	if err := usersCursor.Err(); err != nil {
+		return nil, err
+	}
+
+	likers := make([]*users.User, 0, len(edges))
+	for _, edge := range edges {
+		if user := usersByID[edge.UserID.Hex()]; user != nil {
+			likers = append(likers, user)
+		}
+	}
+	return likers, nil
+}
+
 func (r *MongoRepository) CreateLikeIfAbsent(ctx context.Context, postID, userID string) (bool, error) {
 	if err := r.ensureIndexes(ctx); err != nil {
 		return false, err
@@ -910,6 +981,41 @@ func (r *MemoryRepository) ListLikedPostIDs(_ context.Context, userID string, po
 		}
 	}
 	return result, nil
+}
+
+func (r *MemoryRepository) ListPostLikers(ctx context.Context, postID string, limit int) ([]*users.User, error) {
+	r.mu.RLock()
+	post, ok := r.posts[postID]
+	if !ok || post.IsDeleted {
+		r.mu.RUnlock()
+		return nil, ErrPostNotFound
+	}
+	likesByPost := r.likes[postID]
+	userIDs := make([]string, 0, len(likesByPost))
+	for userID := range likesByPost {
+		userIDs = append(userIDs, userID)
+	}
+	r.mu.RUnlock()
+
+	sort.Strings(userIDs)
+	if limit <= 0 {
+		limit = 6
+	}
+	if len(userIDs) > limit {
+		userIDs = userIDs[:limit]
+	}
+	if len(userIDs) == 0 || r.userRepo == nil {
+		return []*users.User{}, nil
+	}
+
+	likers := make([]*users.User, 0, len(userIDs))
+	for _, userID := range userIDs {
+		user, err := r.userRepo.FindByID(ctx, userID)
+		if err == nil && user != nil {
+			likers = append(likers, user)
+		}
+	}
+	return likers, nil
 }
 
 func (r *MemoryRepository) SoftDeletePost(_ context.Context, postID, authorID string) error {

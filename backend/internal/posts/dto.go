@@ -1,6 +1,10 @@
 package posts
 
-import "time"
+import (
+	"time"
+
+	"decoy-club/backend/internal/users"
+)
 
 type CreatePostRequest struct {
 	ContentMarkdown string   `json:"content_markdown"`
@@ -49,6 +53,39 @@ type TopicView struct {
 
 type TrendingTopicsResponse struct {
 	Topics []*TopicView `json:"topics"`
+}
+
+type PostLikerView struct {
+	ID        string `json:"id"`
+	Username  string `json:"username"`
+	AvatarURL string `json:"avatar_url,omitempty"`
+}
+
+type PostLikeDetailResponse struct {
+	Likers []*PostLikerView `json:"likers"`
+	Total  int64            `json:"total"`
+}
+
+func NewPostLikerView(user *users.User) *PostLikerView {
+	if user == nil {
+		return nil
+	}
+	return &PostLikerView{
+		ID:        user.ID.Hex(),
+		Username:  user.Username,
+		AvatarURL: user.AvatarURL,
+	}
+}
+
+func NewPostLikerViews(likers []*users.User) []*PostLikerView {
+	if len(likers) == 0 {
+		return []*PostLikerView{}
+	}
+	views := make([]*PostLikerView, 0, len(likers))
+	for _, liker := range likers {
+		views = append(views, NewPostLikerView(liker))
+	}
+	return views
 }
 
 func NewPostView(post *Post) *PostView {

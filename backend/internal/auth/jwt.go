@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 	"time"
 )
@@ -28,7 +29,7 @@ func SignJWT(secret, subject, username string) (string, error) {
 		Subject:   subject,
 		Username:  username,
 		IssuedAt:  now.Unix(),
-		ExpiresAt: now.Add(24 * time.Hour).Unix(),
+		ExpiresAt: now.Add(7 * 24 * time.Hour).Unix(),
 	}
 
 	headerJSON, err := json.Marshal(jwtHeader{Alg: "HS256", Typ: "JWT"})
@@ -56,6 +57,7 @@ func SignJWT(secret, subject, username string) (string, error) {
 func VerifyJWT(secret, token string) (*JWTClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
+		log.Default().Printf("invalid token format: expected 3 parts, got %s", token)
 		return nil, errors.New("invalid token")
 	}
 
@@ -68,22 +70,27 @@ func VerifyJWT(secret, token string) (*JWTClaims, error) {
 	expectedSignature := mac.Sum(nil)
 	actualSignature, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
+		log.Default().Printf("invalid token signature encoding: %s", token)
 		return nil, errors.New("invalid token")
 	}
 	if !hmac.Equal(expectedSignature, actualSignature) {
+		log.Default().Printf("invalid token signature: %s", token)
 		return nil, errors.New("invalid token")
 	}
 
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
+		log.Default().Printf("invalid token payload encoding: %s", token)
 		return nil, errors.New("invalid token")
 	}
 
 	var claims JWTClaims
 	if err := json.Unmarshal(payload, &claims); err != nil {
+		log.Default().Printf("invalid token payload: %s", token)
 		return nil, errors.New("invalid token")
 	}
 	if time.Now().UTC().Unix() > claims.ExpiresAt {
+		log.Default().Printf("token expired: %s", token)
 		return nil, errors.New("token expired")
 	}
 
