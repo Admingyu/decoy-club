@@ -5,3 +5,4 @@ backend/.env
 frontend/.env
 .DS_Store
 backend/config.yml
+backend/uploads/
