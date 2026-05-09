@@ -53,6 +53,18 @@ func TestRouterRegistersUserSearchRoute(t *testing.T) {
 	}
 }
 
+func TestRouterRegistersPostSearchRoute(t *testing.T) {
+	router := apphttp.NewRouter(nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/posts/search?q=hello", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("expected post search route to be registered")
+	}
+}
+
 func TestRouterRegistersCommentRoutes(t *testing.T) {
 	router := apphttp.NewRouter(nil)
 

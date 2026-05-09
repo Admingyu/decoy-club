@@ -2,6 +2,7 @@ package posts
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +119,23 @@ func TestListPublicTimelineRejectsBeforeIDWithoutBefore(t *testing.T) {
 	}
 }
 
+func TestSearchPostsTrimsQueryAndReturnsMatchingPosts(t *testing.T) {
+	repo := newFakePostRepo()
+	svc := NewService(repo, nil)
+
+	posts, err := svc.SearchPosts(context.Background(), " two ", 10)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	if len(posts) != 1 {
+		t.Fatalf("expected 1 matching post, got %d", len(posts))
+	}
+	if posts[0].ContentMarkdown != "post two" {
+		t.Fatalf("expected post two, got %+v", posts[0])
+	}
+}
+
 type fakePostRepo struct {
 	posts              map[string]*Post
 	follows            map[string]map[string]struct{}
@@ -203,6 +221,24 @@ func (r *fakePostRepo) ListPublicTimeline(_ context.Context, limit int, before *
 	r.lastPublicBefore = before
 	r.lastPublicBeforeID = beforeID
 	return nil, nil
+}
+
+func (r *fakePostRepo) SearchPosts(_ context.Context, query string, limit int) ([]*Post, error) {
+	posts := make([]*Post, 0, len(r.posts))
+	for _, post := range r.posts {
+		if post.IsDeleted {
+			continue
+		}
+		if !strings.Contains(post.ContentMarkdown, query) {
+			continue
+		}
+		cp := *post
+		posts = append(posts, &cp)
+	}
+	if limit > 0 && len(posts) > limit {
+		posts = posts[:limit]
+	}
+	return posts, nil
 }
 
 func (r *fakePostRepo) ListTrendingTopics(_ context.Context, limit int) ([]*Topic, error) {

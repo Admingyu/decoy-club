@@ -37,6 +37,8 @@ function normalizePostsResponse(response: { posts: ApiPost[] | null }) {
   }
 }
 
+export const normalizePostSearchResponse = normalizePostsResponse
+
 export type ApiComment = {
   id: string
   post_id: string
@@ -325,6 +327,13 @@ export function searchUsers(query: string, token?: string) {
   params.set('q', query)
   return request<{ users: ApiProfile[] | null }>(`/users/search?${params.toString()}`, {}, token)
     .then(normalizeUserSearchResponse)
+}
+
+export function searchPosts(query: string, token?: string) {
+  const params = new URLSearchParams()
+  params.set('q', query)
+  return request<{ posts: ApiPost[] | null }>(`/posts/search?${params.toString()}`, {}, token)
+    .then(normalizePostSearchResponse)
 }
 
 export function updateMyStatus(token: string, statusText: string, statusPreset: string) {

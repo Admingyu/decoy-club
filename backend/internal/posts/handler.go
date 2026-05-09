@@ -95,6 +95,28 @@ func (h *Handler) ListTrendingTopics(c *gin.Context) {
 	response.JSON(c, http.StatusOK, TrendingTopicsResponse{Topics: NewTopicViews(topics)})
 }
 
+func (h *Handler) SearchPosts(c *gin.Context) {
+	limit := DefaultSearchLimit
+	if raw := c.Query("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			response.JSON(c, http.StatusBadRequest, gin.H{"error": "invalid limit"})
+			return
+		}
+		limit = parsed
+	}
+
+	posts, err := h.svc.SearchPosts(c.Request.Context(), c.Query("q"), limit)
+	if err != nil {
+		response.JSON(c, http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	response.JSON(c, http.StatusOK, PublicTimelineResponse{
+		Posts: h.newPostViews(c.Request.Context(), posts, c.GetString(users.ContextKeyViewerID)),
+	})
+}
+
 func (h *Handler) GetPost(c *gin.Context) {
 	postID := c.Param("postId")
 	post, err := h.svc.GetPost(c.Request.Context(), postID)

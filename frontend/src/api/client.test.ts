@@ -3,6 +3,7 @@ import {
   normalizeActivityResponse,
   normalizeComment,
   normalizePost,
+  normalizePostSearchResponse,
   normalizeUserSearchResponse,
   type ApiComment,
   type ApiPost,
@@ -37,6 +38,12 @@ describe('normalizeActivityResponse', () => {
 describe('normalizeUserSearchResponse', () => {
   it('normalizes null user search lists from existing API data', () => {
     expect(normalizeUserSearchResponse({ users: null }).users).toEqual([])
+  })
+})
+
+describe('normalizePostSearchResponse', () => {
+  it('normalizes null post search lists from existing API data', () => {
+    expect(normalizePostSearchResponse({ posts: null }).posts).toEqual([])
   })
 })
 

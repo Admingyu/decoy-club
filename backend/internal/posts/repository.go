@@ -3,7 +3,9 @@ package posts
 import (
 	"context"
 	"errors"
+	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -190,6 +192,39 @@ func (r *MongoRepository) ListPublicTimeline(ctx context.Context, limit int, bef
 		return nil, err
 	}
 
+	return posts, nil
+}
+
+func (r *MongoRepository) SearchPosts(ctx context.Context, query string, limit int) ([]*Post, error) {
+	if err := r.ensureIndexes(ctx); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return []*Post{}, nil
+	}
+
+	pattern := regexp.QuoteMeta(query)
+	filter := bson.M{
+		"is_deleted": false,
+		"$or": bson.A{
+			bson.M{"content_markdown": bson.M{"$regex": pattern, "$options": "i"}},
+			bson.M{"topics": bson.M{"$regex": pattern, "$options": "i"}},
+		},
+	}
+	opts := options.Find().
+		SetSort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}).
+		SetLimit(int64(limit))
+
+	cursor, err := r.postsCollection().Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var posts []*Post
+	if err := cursor.All(ctx, &posts); err != nil {
+		return nil, err
+	}
 	return posts, nil
 }
 
@@ -869,6 +904,49 @@ func (r *MemoryRepository) ListPublicTimeline(_ context.Context, limit int, befo
 	}
 
 	return posts, nil
+}
+
+func (r *MemoryRepository) SearchPosts(_ context.Context, query string, limit int) ([]*Post, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if limit <= 0 {
+		return []*Post{}, nil
+	}
+
+	needle := strings.ToLower(query)
+	posts := make([]*Post, 0, len(r.posts))
+	for _, post := range r.posts {
+		if post.IsDeleted {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(post.ContentMarkdown), needle) && !topicMatches(post.Topics, needle) {
+			continue
+		}
+		cp := *post
+		posts = append(posts, &cp)
+	}
+
+	sort.Slice(posts, func(i, j int) bool {
+		if posts[i].CreatedAt.Equal(posts[j].CreatedAt) {
+			return posts[i].ID.Hex() > posts[j].ID.Hex()
+		}
+		return posts[i].CreatedAt.After(posts[j].CreatedAt)
+	})
+
+	if len(posts) > limit {
+		posts = posts[:limit]
+	}
+	return posts, nil
+}
+
+func topicMatches(topics []string, needle string) bool {
+	for _, topic := range topics {
+		if strings.Contains(strings.ToLower(topic), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *MemoryRepository) ListFollowingTimeline(ctx context.Context, viewerID string, page, size int) ([]*Post, error) {

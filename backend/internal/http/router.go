@@ -121,6 +121,7 @@ func NewRouter(deps *Dependencies) *gin.Engine {
 	authedUsers.GET("/:username/activity", activityHandler.List)
 
 	api.GET("/posts", optionalViewerID(cfg.JWTSecret), postHandler.ListPublicTimeline)
+	api.GET("/posts/search", optionalViewerID(cfg.JWTSecret), postHandler.SearchPosts)
 	api.GET("/posts/:postId", optionalViewerID(cfg.JWTSecret), postHandler.GetPost)
 	api.GET("/posts/:postId/likes", postHandler.ListPostLikers)
 	api.GET("/posts/:postId/comments", optionalViewerID(cfg.JWTSecret), commentHandler.ListPostComments)

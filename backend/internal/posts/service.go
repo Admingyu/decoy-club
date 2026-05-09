@@ -3,6 +3,7 @@ package posts
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"decoy-club/backend/internal/common/textparse"
@@ -14,10 +15,16 @@ var ErrPostNotFound = errors.New("post not found")
 var ErrInvalidAuthorID = errors.New("invalid author id")
 var ErrInvalidTimelineCursor = errors.New("before_id requires before")
 
+const (
+	DefaultSearchLimit = 20
+	MaxSearchLimit     = 50
+)
+
 type Repository interface {
 	CreatePost(ctx context.Context, post *Post) (*Post, error)
 	FindPostByID(ctx context.Context, id string) (*Post, error)
 	ListPublicTimeline(ctx context.Context, limit int, before *time.Time, beforeID string) ([]*Post, error)
+	SearchPosts(ctx context.Context, query string, limit int) ([]*Post, error)
 	ListTrendingTopics(ctx context.Context, limit int) ([]*Topic, error)
 	ListFollowingTimeline(ctx context.Context, viewerID string, page, size int) ([]*Post, error)
 	ListPostsByAuthorID(ctx context.Context, authorID string, limit int) ([]*Post, error)
@@ -103,6 +110,20 @@ func (s *Service) ListPublicTimeline(ctx context.Context, limit int, before *tim
 
 func (s *Service) ListTrendingTopics(ctx context.Context, limit int) ([]*Topic, error) {
 	return s.repo.ListTrendingTopics(ctx, limit)
+}
+
+func (s *Service) SearchPosts(ctx context.Context, query string, limit int) ([]*Post, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []*Post{}, nil
+	}
+	if limit <= 0 {
+		limit = DefaultSearchLimit
+	}
+	if limit > MaxSearchLimit {
+		limit = MaxSearchLimit
+	}
+	return s.repo.SearchPosts(ctx, query, limit)
 }
 
 func (s *Service) ListFollowingTimeline(ctx context.Context, viewerID string, page, size int) ([]*Post, error) {
