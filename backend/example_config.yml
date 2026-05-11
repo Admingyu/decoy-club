@@ -2,6 +2,6 @@ port: ":8080"
 mongo_uri: mongodb://decoy_club:decoy_club@127.0.0.1:27017
 database_name: decoy_club
 jwt_secret: dev-jwt-secret
-public_base_url: http://localhost:8080
+public_base_url: http://localhost:3000
 upload_dir: ./uploads
 frontend_origin: http://localhost:3000

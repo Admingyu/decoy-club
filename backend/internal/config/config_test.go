@@ -42,6 +42,29 @@ func TestLoadFindsBackendConfigYMLFromRepositoryRoot(t *testing.T) {
 	assertConfig(t, cfg)
 }
 
+func TestLoadDefaultsPublicBaseURLToFrontendProxyOrigin(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte(`port: ":9090"
+mongo_uri: mongodb://config-host:27017
+database_name: config_database
+jwt_secret: config-secret
+upload_dir: ./config-uploads
+frontend_origin: http://localhost:3000
+`)
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), content, 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+	chdir(t, dir)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.PublicBaseURL != "http://localhost:3000" {
+		t.Fatalf("public base url mismatch: got %q, want %q", cfg.PublicBaseURL, "http://localhost:3000")
+	}
+}
+
 func writeConfigFile(t *testing.T, path string) {
 	t.Helper()
 

@@ -83,6 +83,12 @@ Important variables:
 
 - `VITE_API_BASE_URL`
 
+By default the frontend uses the same-origin Vite development proxy:
+
+```bash
+VITE_API_BASE_URL=/api/v1
+```
+
 ### Install and Run
 
 ```bash
@@ -104,9 +110,10 @@ npm run build
 1. Start MongoDB
 2. Start backend on `http://localhost:8080`
 3. Start frontend on `http://localhost:3000`
-4. Register a user and begin posting
+4. Open `http://localhost:3000`; API requests under `/api` and uploaded files under `/uploads` are proxied to the backend by Vite.
+5. Register a user and begin posting
 
-Uploaded images are served from the backend under `/uploads/...`.
+For local proxy mode, keep `public_base_url` aligned with the browser-facing frontend origin so uploaded image URLs are returned as `http://localhost:3000/uploads/...`.
 
 ## API Highlights
 

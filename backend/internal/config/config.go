@@ -53,7 +53,7 @@ func defaultConfig() Config {
 		MongoURI:       "mongodb://localhost:27017",
 		DatabaseName:   "decoy_club",
 		JWTSecret:      "dev-jwt-secret",
-		PublicBaseURL:  "http://localhost:8080",
+		PublicBaseURL:  "http://localhost:3000",
 		UploadDir:      "./uploads",
 		FrontendOrigin: "http://localhost:3000",
 	}

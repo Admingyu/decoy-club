@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  API_BASE_URL,
   normalizeActivityResponse,
   normalizeComment,
   normalizePost,
@@ -20,6 +21,12 @@ const basePost: ApiPost = {
   created_at: '2026-04-24T00:00:00Z',
   updated_at: '2026-04-24T00:00:00Z',
 }
+
+describe('API_BASE_URL', () => {
+  it('defaults API calls to the same-origin Vite proxy route', () => {
+    expect(API_BASE_URL).toBe('/api/v1')
+  })
+})
 
 describe('normalizePost', () => {
   it('normalizes null embedded image lists from existing API data', () => {
